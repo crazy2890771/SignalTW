@@ -58,9 +58,9 @@ color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_M
 bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
      tooltip = "BUY: ราคาย่อลงแตะโซน Bullish (OB/FVG) แล้วปิดแท่งเขียวกลับขึ้นเหนือโซน\nSELL: ราคาเด้งขึ้นแตะโซน Bearish แล้วปิดแท่งแดงกลับลงใต้โซน\nแต่ละโซนให้สัญญาณได้ครั้งเดียว")
 string sigPreset   = input.string("Medium", "Signal frequency", options = ["Low", "Medium", "High", "Custom"], group = G_SIG,
-     tooltip = "Low = น้อยแต่คัดมาก (โซน HTF, ตามเทรนด์ HTF, Premium/Discount, รอ 120 นาที)\nMedium = สมดุล (โซน HTF + OB ของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH, Premium/Discount, รอ 60 นาที)\nHigh = สัญญาณมาก (ทุกโซน, ไม่ใช้ Premium/Discount, รอ 30 นาที)\nCustom = ใช้ค่าด้านล่างทั้งหมด")
+     tooltip = "Low = น้อยแต่คัดมาก (โซน HTF, ตามเทรนด์ HTF, Premium/Discount, รอ 120 นาที)\nMedium = สมดุล (โซน HTF + OB ของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH ของ HTF ที่ต่ำกว่า, Premium/Discount, รอ 60 นาที)\nHigh = สัญญาณมาก (ทุกโซน, ไม่ใช้ Premium/Discount, รอ 30 นาที)\nCustom = ใช้ค่าด้านล่างทั้งหมด")
 string sigFilter   = input.string("HTF trend or CHoCH", "Trend filter (Custom)", options = ["HTF trend or CHoCH", "HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
-     tooltip = "HTF trend or CHoCH = BUY เมื่อเทรนด์ HTF เป็นขาขึ้น หรือ TF กราฟเกิด CHoCH กลับเป็นขาขึ้นแล้ว (SELL กลับกัน)\nHTF trend = ตามเทรนด์ HTF ที่สูงที่สุดที่เปิดอยู่เท่านั้น\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
+     tooltip = "HTF trend or CHoCH = BUY เมื่อเทรนด์ HTF สูงสุดเป็นขาขึ้น หรือ HTF ที่ต่ำที่สุด (เช่น 1H) เกิด CHoCH กลับเป็นขาขึ้นแล้ว (SELL กลับกัน) ถ้าเปิด HTF ไว้ตัวเดียวจะใช้ CHoCH ของ TF กราฟ\nHTF trend = ตามเทรนด์ HTF ที่สูงที่สุดที่เปิดอยู่เท่านั้น\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
 string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
 string sigZoneTF   = input.string("HTF + chart OB", "", options = ["All TF", "HTF + chart OB", "HTF only"], inline = "sz", group = G_SIG,
      tooltip = "(Custom) HTF only = ใช้เฉพาะโซนของ HTF, HTF + chart OB = เพิ่ม OB ของ TF กราฟ, All TF = ทุกโซน\nถ้าไม่มี HTF ที่สูงกว่ากราฟจะใช้โซนของกราฟแทน")
@@ -452,6 +452,9 @@ string chartTag = tfName(timeframe.period)
 // BUY / SELL SIGNALS
 //==============================================================================
 int   htfBias = v3 ? t3 : v2 ? t2 : v1 ? t1 : cTrend
+// Reversal confirmation: CHoCH on the lowest enabled HTF (e.g. 1H when 1H + 4H are on), chart TF if only one HTF
+int   nHTF     = (v1 ? 1 : 0) + (v2 ? 1 : 0) + (v3 ? 1 : 0)
+int   revTrend = nHTF >= 2 ? (v1 ? t1 : t2) : cTrend
 int   sigMinRank = eZoneTF != "All TF" and (v1 or v2 or v3) ? 1 : 0
 
 // Premium / Discount of the bias timeframe's recent range (confirmed bars only)
@@ -461,10 +464,10 @@ float pdMid   = (pdHi + pdLo) / 2
 bool  pdBuy   = not eUsePD or na(pdMid) or close < pdMid
 bool  pdSell  = not eUsePD or na(pdMid) or close > pdMid
 bool  biasBuy  = eFilter == "None" or (eFilter == "HTF trend" and htfBias > 0) or
-     (eFilter == "HTF trend or CHoCH" and (htfBias > 0 or cTrend > 0)) or
+     (eFilter == "HTF trend or CHoCH" and (htfBias > 0 or revTrend > 0)) or
      (eFilter == "Chart trend" and cTrend > 0) or (eFilter == "Both" and htfBias > 0 and cTrend > 0)
 bool  biasSell = eFilter == "None" or (eFilter == "HTF trend" and htfBias < 0) or
-     (eFilter == "HTF trend or CHoCH" and (htfBias < 0 or cTrend < 0)) or
+     (eFilter == "HTF trend or CHoCH" and (htfBias < 0 or revTrend < 0)) or
      (eFilter == "Chart trend" and cTrend < 0) or (eFilter == "Both" and htfBias < 0 and cTrend < 0)
 var int lastSig = na
 bool  coolOk   = na(lastSig) or time - lastSig >= eCool * 60000

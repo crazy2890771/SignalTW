@@ -48,7 +48,7 @@
 | Label size | ขนาดตัวอักษรป้ายโซน |
 | BOS / CHoCH | `All` / `CHoCH only` / `None` |
 | Signal frequency | `Low` / `Medium` (ค่าเริ่มต้น) / `High` / `Custom` ตั้งค่าตัวกรองสัญญาณทั้งหมดในคลิกเดียว (Custom = ใช้ค่าที่ตั้งเองด้านล่าง) |
-| Trend filter | `HTF trend or CHoCH` = BUY เมื่อ HTF เป็นขาขึ้น หรือ TF กราฟเกิด CHoCH กลับเป็นขาขึ้นแล้ว, `HTF trend`, `Chart trend`, `Both`, `None` |
+| Trend filter | `HTF trend or CHoCH` = BUY เมื่อ HTF สูงสุดเป็นขาขึ้น หรือ HTF ที่ต่ำที่สุด (เช่น 1H) เกิด CHoCH กลับเป็นขาขึ้นแล้ว, `HTF trend`, `Chart trend`, `Both`, `None` |
 | Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `HTF only` / `HTF + chart OB` / `All TF`) |
 | Premium / Discount filter | BUY เฉพาะครึ่งล่างของกรอบราคา HTF (N แท่งล่าสุด), SELL เฉพาะครึ่งบน |
 | Min move away before retest (x ATR) | ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ก่อน แล้วย้อนกลับมาแตะ จึงนับเป็นสัญญาณ  |
@@ -66,7 +66,7 @@
 | | Low | Medium | High |
 |---|---|---|---|
 | โซนที่ใช้ | HTF | HTF + OB ของกราฟ | ทุกโซน |
-| ตัวกรองเทรนด์ | HTF | HTF หรือ CHoCH กลับตัว | HTF หรือ CHoCH กลับตัว |
+| ตัวกรองเทรนด์ | HTF | HTF หรือ CHoCH กลับตัวของ HTF ที่ต่ำกว่า | HTF หรือ CHoCH กลับตัวของ HTF ที่ต่ำกว่า |
 | Premium / Discount | ✅ | ✅ | ❌ |
 | ระยะออกจากโซนก่อนกลับมาแตะ | 1.0 ATR | 0.75 ATR | 0.5 ATR |
 | ระยะห่างระหว่างสัญญาณ | 120 นาที | 60 นาที | 30 นาที |
