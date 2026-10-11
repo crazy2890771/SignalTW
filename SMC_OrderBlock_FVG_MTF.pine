@@ -13,6 +13,8 @@ const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
 const string G_SIG  = "BUY / SELL Signals"
+const string G_EXEC = "Execution & costs (backtest)"
+const string G_TIME = "Session / news / volatility"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
@@ -73,13 +75,63 @@ int    sigCooldown = input.int(60, "Min minutes between signals (Custom)", minva
      tooltip = "ระยะเวลาขั้นต่ำระหว่างสัญญาณ (นาที) ใช้เวลาจริงจึงได้ผลเท่ากันทุก TF")
 bool   showSLTP    = input.bool(true, "Show SL / TP (last signal)", inline = "sltp", group = G_SIG)
 float  rrRatio     = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "sltp", group = G_SIG,
-     tooltip = "SL = ใต้/เหนือขอบโซน + 0.1 ATR, TP = Entry ± R:R × ความเสี่ยง")
+     tooltip = "TP = Entry ± R:R × Risk (Risk = ระยะจาก Entry จริงหลังรวม spread ถึง SL) ดูการวาง SL ที่กลุ่ม Execution & costs")
 color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
 color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
 
 bool   showStats   = input.bool(true, "Show backtest stats", inline = "bt", group = G_SIG,
      tooltip = "ทดสอบย้อนหลังทุกสัญญาณบนข้อมูลที่โหลดในกราฟ: ชนะเมื่อโดน TP ก่อน, แพ้เมื่อโดน SL ก่อน (ถ้าแท่งเดียวโดนทั้งคู่ นับเป็นแพ้)")
 string statsPos    = input.string("Bottom Left", "", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], inline = "bt", group = G_SIG)
+
+float  spreadPx    = input.float(0.30, "Spread", minval = 0, step = 0.05, inline = "cost", group = G_EXEC)
+float  slipPx      = input.float(0.10, "Slippage", minval = 0, step = 0.05, inline = "cost", group = G_EXEC,
+     tooltip = "หน่วยเป็นราคา (XAUUSD: 0.30 = 30 cents) ใช้คำนวณ backtest แบบมีต้นทุน\nกราฟถือเป็นราคา Bid: BUY เข้าที่ Ask (+spread +slippage), SELL โดน SL เมื่อ Ask แตะ\nSlippage คิดกับคำสั่ง market และ stop (TP เป็น limit ไม่มี slippage)\nXAUUSD ช่วงตลาดคึกคักประมาณ 0.20–0.40 ถ้าใช้กับสินค้าอื่นต้องปรับค่านี้")
+string entryMode   = input.string("Market (bar close)", "Entry", options = ["Market (bar close)", "Limit at zone edge"], inline = "ent", group = G_EXEC)
+int    limitBars   = input.int(4, "valid bars", minval = 1, maxval = 50, inline = "ent", group = G_EXEC,
+     tooltip = "Market = เข้าที่ราคาปิดแท่งสัญญาณ\nLimit at zone edge = ตั้ง limit ที่ขอบโซนฝั่งใกล้ราคา รอราคาย้อนกลับมา (ความเสี่ยงต่อเทรดเล็กลง แต่บางครั้งไม่ได้เข้า) ยกเลิกเมื่อครบจำนวนแท่ง หรือราคาไปถึง TP ก่อน")
+string slMode      = input.string("Signal wick", "Stop-loss at", options = ["Signal wick", "Zone edge"], group = G_EXEC,
+     tooltip = "Signal wick = ใต้ไส้เทียนต่ำสุด (BUY) / เหนือไส้สูงสุด (SELL) ของแท่งสัญญาณและแท่งก่อนหน้า คือจุดที่กวาด liquidity\nZone edge = เลยขอบโซนฝั่งไกล (แบบเดิม มักกว้างกว่ามาก)\nSELL บวก spread ให้อัตโนมัติ เพราะ SL ของ SELL โดนด้วยราคา Ask")
+float  bufSpread   = input.float(2.0, "SL buffer: x spread", minval = 0, step = 0.5, inline = "buf", group = G_EXEC)
+float  bufAtr      = input.float(0.15, "or x ATR", minval = 0, step = 0.05, inline = "buf", group = G_EXEC,
+     tooltip = "ระยะเผื่อของ SL = ค่าที่มากกว่าระหว่าง (x × spread) กับ (x × ATR14 ของกราฟ)")
+float  minSlSpread = input.float(3.0, "Skip if SL < x spread", minval = 0, step = 0.5, group = G_EXEC,
+     tooltip = "ไม่เข้าเทรดถ้า SL แคบเกินไปเทียบ spread เพราะต้นทุนจะกินกำไรเกือบหมด")
+float  maxSlAtr    = input.float(1.5, "Skip if SL > x ATR", minval = 0, step = 0.25, group = G_EXEC,
+     tooltip = "ไม่เข้าเทรดถ้า SL กว้างเกิน x × ATR14 ของกราฟ (0 = ไม่จำกัด) กันเทรดที่ความเสี่ยงใหญ่เกินสำหรับการเทรดสั้น")
+float  maxChase    = input.float(0.5, "Skip if close ran > x R from zone", minval = 0, step = 0.1, group = G_EXEC,
+     tooltip = "เฉพาะ Market entry: ถ้าแท่งสัญญาณปิดห่างจากขอบโซนเกิน x เท่าของ Risk แปลว่าราคาวิ่งไปแล้ว ไม่ไล่ราคา (0 = ปิด)")
+int    maxHold     = input.int(240, "Time stop (minutes, 0 = off)", minval = 0, step = 15, group = G_EXEC,
+     tooltip = "ถ้าเทรดยังไม่โดน TP/SL ภายในเวลานี้ ปิดที่ราคาปิดแท่ง (นับใน backtest)")
+bool   onePos      = input.bool(true, "One position at a time", group = G_EXEC,
+     tooltip = "ระหว่างที่มีออเดอร์ค้าง (รวม limit ที่รอ) สัญญาณใหม่จะถูกข้าม เหมือนการเทรดจริง")
+bool   showSkipped = input.bool(false, "Show filtered signals (×)", group = G_EXEC,
+     tooltip = "แสดงเครื่องหมาย × ตรงสัญญาณที่ถูกกรองทิ้ง เอาเมาส์ชี้เพื่อดูเหตุผล")
+
+bool   useSess     = input.bool(true, "Trade only in sessions", group = G_TIME,
+     tooltip = "ใช้กับกราฟ TF ไม่เกิน 1H เวลาอ้างอิงตามเมืองนั้น ๆ (ปรับ Daylight Saving อัตโนมัติ)\nค่าเริ่มต้น: London 08:00–11:30 และ New York 08:00–11:30 (ประมาณ 14:00–17:30 และ 19:00–22:30 เวลาไทยช่วงหน้าร้อนของฝั่งนั้น)")
+bool   useLon      = input.bool(true, "London", inline = "lon", group = G_TIME)
+string sessLon     = input.session("0800-1130", "", inline = "lon", group = G_TIME)
+bool   useNY       = input.bool(true, "New York", inline = "ny", group = G_TIME)
+string sessNY      = input.session("0800-1130", "", inline = "ny", group = G_TIME)
+bool   blockRoll   = input.bool(true, "Block rollover (16:45–18:15 NY)", group = G_TIME,
+     tooltip = "ช่วงเปลี่ยนวันของโบรกเกอร์ spread ทองถ่างมากและสภาพคล่องต่ำ")
+bool   blockData   = input.bool(true, "Block US data window", inline = "data", group = G_TIME)
+string sessData    = input.string("0820-0900:3456", "", inline = "data", group = G_TIME,
+     tooltip = "เวลา New York, :3456 = อังคาร–ศุกร์ (ช่วงประกาศข่าว 08:30 เช่น CPI, NFP, Jobless Claims)")
+bool   news1On     = input.bool(false, "News 1", inline = "n1", group = G_TIME)
+int    news1T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n1", group = G_TIME)
+bool   news2On     = input.bool(false, "News 2", inline = "n2", group = G_TIME)
+int    news2T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n2", group = G_TIME)
+bool   news3On     = input.bool(false, "News 3", inline = "n3", group = G_TIME)
+int    news3T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n3", group = G_TIME)
+int    newsBefore  = input.int(15, "News window: min before", minval = 0, inline = "nw", group = G_TIME)
+int    newsAfter   = input.int(30, "after", minval = 0, inline = "nw", group = G_TIME,
+     tooltip = "ใส่เวลาข่าวแรงที่ไม่ได้ประกาศ 08:30 NY เช่น FOMC (14:00 NY) แล้วระบบจะไม่เข้าเทรดในช่วงก่อน/หลังข่าว")
+bool   useVol      = input.bool(true, "ATR / avg ATR between", inline = "vol", group = G_TIME)
+float  volMin      = input.float(0.6, "", minval = 0, step = 0.1, inline = "vol", group = G_TIME)
+float  volMax      = input.float(2.5, "and", minval = 0, step = 0.1, inline = "vol", group = G_TIME,
+     tooltip = "ATR14 เทียบค่าเฉลี่ย 100 แท่ง: ต่ำเกิน = ตลาดเงียบ spread กินกำไร, สูงเกิน = ช่วงข่าว/กระชาก SL หลุดง่าย")
+bool   shadeSess   = input.bool(true, "Shade sessions / blocked times", group = G_TIME)
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 
@@ -93,6 +145,9 @@ int    eCool    = isCustom ? sigCooldown : sigPreset == "Low" ? 120 : sigPreset 
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
 float  atrC    = ta.atr(14)
+float  atrAvg  = ta.sma(atrC, 100)
+float  lo2     = ta.lowest(low, 2)
+float  hi2     = ta.highest(high, 2)
 string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
 
 //==============================================================================
@@ -343,12 +398,14 @@ htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
     [valid, t, nb or nbf, ns or nsf]
 
 // BUY: wick into a bullish zone, bullish candle closes back above it (SELL mirrored).
-// Returns [buy, buy zone bottom, sell, sell zone top]; a zone fires only once.
+// Returns [buy, buy zone bottom, buy zone top, sell, sell zone top, sell zone bottom]; a zone fires only once.
 scanSignals(array<Zone> zs, bool allowBuy, bool allowSell, int minRank) =>
     bool  buy  = false
     bool  sell = false
     float bBot = na
+    float bTop = na
     float sTop = na
+    float sBot = na
     for z in zs
         bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
         if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and (z.rank >= minRank or (eZoneTF == "HTF + chart OB" and z.isOB)) and typeOk
@@ -356,11 +413,13 @@ scanSignals(array<Zone> zs, bool allowBuy, bool allowSell, int minRank) =>
                 buy        := true
                 z.signaled := true
                 bBot       := na(bBot) ? z.bot : math.min(bBot, z.bot)
+                bTop       := na(bTop) ? z.top : math.max(bTop, z.top)
             if allowSell and not z.bull and high >= z.bot and close < z.bot and close < open
                 sell       := true
                 z.signaled := true
                 sTop       := na(sTop) ? z.top : math.max(sTop, z.top)
-    [buy, bBot, sell, sTop]
+                sBot       := na(sBot) ? z.bot : math.min(sBot, z.bot)
+    [buy, bBot, bTop, sell, sTop, sBot]
 
 //==============================================================================
 // STATE
@@ -474,16 +533,31 @@ bool  coolOk   = na(lastSig) or time - lastSig >= eCool * 60000
 bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy and pdBuy
 bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell and pdSell
 
-[sb0, sbb0, ss0, sst0] = scanSignals(zC, canBuy, canSell, sigMinRank)
-[sb1, sbb1, ss1, sst1] = scanSignals(zH1, canBuy, canSell, sigMinRank)
-[sb2, sbb2, ss2, sst2] = scanSignals(zH2, canBuy, canSell, sigMinRank)
-[sb3, sbb3, ss3, sst3] = scanSignals(zH3, canBuy, canSell, sigMinRank)
-bool  buySig  = sb0 or sb1 or sb2 or sb3
-bool  sellSig = ss0 or ss1 or ss2 or ss3
+// Session / news / volatility (time filters apply on intraday charts up to 1H)
+bool  timeOn = timeframe.isintraday and chartSec <= 3600
+bool  inLon  = useLon and not na(time(timeframe.period, sessLon, "Europe/London"))
+bool  inNY   = useNY and not na(time(timeframe.period, sessNY, "America/New_York"))
+bool  inRoll = blockRoll and not na(time(timeframe.period, "1645-1815", "America/New_York"))
+bool  inData = blockData and not na(time(timeframe.period, sessData, "America/New_York"))
+newsHit(bool on, int t) => on and time_close > t - newsBefore * 60000 and time < t + newsAfter * 60000
+bool  inNews = newsHit(news1On, news1T) or newsHit(news2On, news2T) or newsHit(news3On, news3T)
+bool  sessOk = not timeOn or not useSess or inLon or inNY
+bool  newsOk = not timeOn or not (inRoll or inData or inNews)
+float atrRel = atrC / atrAvg
+bool  volOk  = not useVol or na(atrRel) or (atrRel >= volMin and atrRel <= volMax)
+bgcolor(shadeSess and timeOn and showSig ? (not newsOk ? color.new(color.red, 92) : useSess and (inLon or inNY) ? color.new(color.blue, 95) : na) : na,
+     title = "Session shading")
+
+[sb0, sbb0, sbt0, ss0, sst0, ssb0] = scanSignals(zC, canBuy, canSell, sigMinRank)
+[sb1, sbb1, sbt1, ss1, sst1, ssb1] = scanSignals(zH1, canBuy, canSell, sigMinRank)
+[sb2, sbb2, sbt2, ss2, sst2, ssb2] = scanSignals(zH2, canBuy, canSell, sigMinRank)
+[sb3, sbb3, sbt3, ss3, sst3, ssb3] = scanSignals(zH3, canBuy, canSell, sigMinRank)
+bool  rawBuy  = sb0 or sb1 or sb2 or sb3
+bool  rawSell = ss0 or ss1 or ss2 or ss3
 // Conflicting signals on the same bar cancel each other
-if buySig and sellSig
-    buySig  := false
-    sellSig := false
+if rawBuy and rawSell
+    rawBuy  := false
+    rawSell := false
 
 markTouched(array<Zone> zs, bool bull) =>
     for z in zs
@@ -496,69 +570,191 @@ var line slLine = na
 var line tpLine = na
 var line enLine = na
 
-drawSignal(bool isBuy, float zoneEdge) =>
-    float entry = close
-    float sl    = isBuy ? zoneEdge - 0.1 * atrC : zoneEdge + 0.1 * atrC
-    float tp    = entry + (entry - sl) * rrRatio
-    color c     = isBuy ? buyCol : sellCol
-    string tip  = (isBuy ? "BUY" : "SELL") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(rrRatio) + ")"
-    label lb = label.new(bar_index, close, isBuy ? "BUY" : "SELL", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
-         textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
-    alert(syminfo.ticker + " " + (isBuy ? "BUY" : "SELL") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
-    [entry, sl, tp, lb]
-
 //==============================================================================
-// BACKTEST (every signal: TP first = win, SL first = loss)
+// BACKTEST ENGINE (after costs; chart prices are treated as Bid)
 //==============================================================================
 type Trade
     label lb
     bool  isBuy
-    float entry
+    float entry       // fill price (limit price while pending)
     float sl
     float tp
+    float risk        // entry -> SL distance in price
+    int   openTime
+    int   expiryBar   // pending limit is cancelled after this bar
+    bool  filled
+    float cost        // estimated spread + slippage cost in R
 
-var array<Trade> openTrades = array.new<Trade>()
-var int   buyWin   = 0
-var int   buyLoss  = 0
-var int   sellWin  = 0
-var int   sellLoss = 0
+type Stats
+    int   tp        = 0
+    int   sl        = 0
+    int   tm        = 0
+    int   miss      = 0
+    float sumR      = 0.0
+    float gWin      = 0.0
+    float gLoss     = 0.0
+    float peak      = 0.0
+    float maxDD     = 0.0
+    int   streak    = 0
+    int   maxStreak = 0
+    float sumRisk   = 0.0
+    float sumCost   = 0.0
+    float sumHold   = 0.0
+    int   bN        = 0
+    int   bW        = 0
+    float bR        = 0.0
+    int   sN        = 0
+    int   sW        = 0
+    float sR        = 0.0
+    int   fPos      = 0
+    int   fSess     = 0
+    int   fNews     = 0
+    int   fVol      = 0
+    int   fSlMin    = 0
+    int   fSlMax    = 0
+    int   fChase    = 0
 
-// Resolve open trades on this bar (before new signals are added, so the entry bar is never counted)
-if barstate.isconfirmed and openTrades.size() > 0
-    for i = openTrades.size() - 1 to 0
-        Trade tr = openTrades.get(i)
-        bool hitSL = tr.isBuy ? low <= tr.sl : high >= tr.sl
-        bool hitTP = tr.isBuy ? high >= tr.tp : low <= tr.tp
-        if hitSL or hitTP
-            bool win = hitTP and not hitSL     // both on one bar -> counted as loss (conservative)
-            if tr.isBuy
-                buyWin  += win ? 1 : 0
-                buyLoss += win ? 0 : 1
-            else
-                sellWin  += win ? 1 : 0
-                sellLoss += win ? 0 : 1
-            tr.lb.set_text((tr.isBuy ? "BUY" : "SELL") + (win ? " ✔" : " ✘"))
-            if not win
-                tr.lb.set_color(color.gray)
-            openTrades.remove(i)
+var array<Trade> trades = array.new<Trade>()
+var Stats        S      = Stats.new()
 
-if buySig or sellSig
-    lastSig := time
-    // One signal per price area: retire every same-side zone the signal bar touched (all TFs)
-    markTouched(zC, buySig)
-    markTouched(zH1, buySig)
-    markTouched(zH2, buySig)
-    markTouched(zH3, buySig)
-    float edge = buySig ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
-    [en, sl, tp, lb] = drawSignal(buySig, edge)
-    openTrades.push(Trade.new(lb, buySig, en, sl, tp))
-    if showSLTP
-        line.delete(slLine)
-        line.delete(tpLine)
-        line.delete(enLine)
-        enLine := line.new(bar_index, en, bar_index + 20, en, color = chart.fg_color, style = line.style_dotted)
-        slLine := line.new(bar_index, sl, bar_index + 20, sl, color = sellCol, width = 2)
-        tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
+// kind: 1 = TP, -1 = SL, 0 = time stop
+closeTrade(Stats s, Trade t, float exitPx, int kind) =>
+    float r = (t.isBuy ? exitPx - t.entry : t.entry - exitPx) / t.risk
+    s.tp        := s.tp + (kind == 1 ? 1 : 0)
+    s.sl        := s.sl + (kind == -1 ? 1 : 0)
+    s.tm        := s.tm + (kind == 0 ? 1 : 0)
+    s.sumR      := s.sumR + r
+    s.gWin      := s.gWin + math.max(r, 0.0)
+    s.gLoss     := s.gLoss + math.max(-r, 0.0)
+    s.peak      := math.max(s.peak, s.sumR)
+    s.maxDD     := math.max(s.maxDD, s.peak - s.sumR)
+    s.streak    := r < 0 ? s.streak + 1 : 0
+    s.maxStreak := math.max(s.maxStreak, s.streak)
+    s.sumRisk   := s.sumRisk + t.risk
+    s.sumCost   := s.sumCost + t.cost
+    s.sumHold   := s.sumHold + (time_close - t.openTime) / 60000.0
+    if t.isBuy
+        s.bN := s.bN + 1
+        s.bW := s.bW + (r > 0 ? 1 : 0)
+        s.bR := s.bR + r
+    else
+        s.sN := s.sN + 1
+        s.sW := s.sW + (r > 0 ? 1 : 0)
+        s.sR := s.sR + r
+    string mark = kind == 1 ? " ✔ " : kind == -1 ? " ✘ " : " ⏱ "
+    t.lb.set_text((t.isBuy ? "BUY" : "SELL") + mark + (r >= 0 ? "+" : "") + str.tostring(r, "#.#") + "R")
+    if r < 0
+        t.lb.set_color(color.gray)
+    r
+
+// Resolve open / pending trades on this bar, before new signals (the entry bar itself is never counted).
+// Same-bar SL and TP -> SL (conservative).
+if barstate.isconfirmed and trades.size() > 0
+    for i = trades.size() - 1 to 0
+        Trade t    = trades.get(i)
+        bool  done = false
+        if not t.filled
+            bool hitFill = t.isBuy ? low + spreadPx <= t.entry : high >= t.entry
+            bool gone = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp
+            if hitFill
+                t.filled   := true
+                t.openTime := time
+                t.lb.set_text(t.isBuy ? "BUY" : "SELL")
+                if (t.isBuy ? low <= t.sl : high + spreadPx >= t.sl)
+                    closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, -1)
+                    done := true
+            else if gone or bar_index > t.expiryBar
+                S.miss := S.miss + 1
+                t.lb.set_text((t.isBuy ? "BUY" : "SELL") + " LMT ⌀")
+                t.lb.set_color(color.gray)
+                done := true
+        else
+            bool hitSL = t.isBuy ? low <= t.sl : high + spreadPx >= t.sl
+            bool hitTP = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp
+            if hitSL
+                closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, -1)
+                done := true
+            else if hitTP
+                closeTrade(S, t, t.tp, 1)
+                done := true
+            else if maxHold > 0 and time_close - t.openTime >= maxHold * 60000
+                closeTrade(S, t, t.isBuy ? close - slipPx : close + spreadPx + slipPx, 0)
+                done := true
+        if done
+            trades.remove(i)
+
+// Entry / SL / TP for a new signal. Returns [entry, sl, tp, risk, chase]
+planTrade(bool isBuy, float far, float near, bool lim) =>
+    float buf   = math.max(bufSpread * spreadPx, bufAtr * atrC)
+    float sl    = isBuy ? (slMode == "Signal wick" ? lo2 : far) - buf : (slMode == "Signal wick" ? hi2 : far) + spreadPx + buf
+    float entry = lim ? near : isBuy ? close + spreadPx + slipPx : close - slipPx
+    float risk  = isBuy ? entry - sl : sl - entry
+    float tp    = isBuy ? entry + rrRatio * risk : entry - rrRatio * risk
+    float chase = isBuy ? close - near : near - close
+    [entry, sl, tp, risk, chase]
+
+drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float risk) =>
+    color  c    = isBuy ? buyCol : sellCol
+    string side = isBuy ? "BUY" : "SELL"
+    string tip  = side + (lim ? " LIMIT" : "") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) +
+         "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")"
+    label lb = label.new(bar_index, close, side + (lim ? " LMT" : ""), yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
+         textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
+    alert(syminfo.ticker + " " + side + (lim ? " LIMIT" : "") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
+    lb
+
+// Signal -> filters -> trade
+bool buySig  = false
+bool sellSig = false
+if rawBuy or rawSell
+    bool isBuy = rawBuy
+    // One signal per price area: retire every same-side zone the signal bar touched (all TFs), taken or not
+    markTouched(zC, isBuy)
+    markTouched(zH1, isBuy)
+    markTouched(zH2, isBuy)
+    markTouched(zH3, isBuy)
+    float far  = isBuy ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
+    float near = isBuy ? maxNa(maxNa(sbt0, sbt1), maxNa(sbt2, sbt3)) : minNa(minNa(ssb0, ssb1), minNa(ssb2, ssb3))
+    bool  lim  = entryMode == "Limit at zone edge"
+    [en, sl, tp, risk, chase] = planTrade(isBuy, far, near, lim)
+    string why = ""
+    if onePos and trades.size() > 0
+        why    := "already in a position"
+        S.fPos := S.fPos + 1
+    else if not sessOk
+        why     := "outside trading sessions"
+        S.fSess := S.fSess + 1
+    else if not newsOk
+        why     := "news / rollover window"
+        S.fNews := S.fNews + 1
+    else if not volOk
+        why    := "volatility out of range (ATR x" + str.tostring(atrRel, "#.##") + " of average)"
+        S.fVol := S.fVol + 1
+    else if risk <= 0 or (spreadPx > 0 and risk < minSlSpread * spreadPx)
+        why      := "SL too small vs spread (" + fmt(risk) + ")"
+        S.fSlMin := S.fSlMin + 1
+    else if maxSlAtr > 0 and risk > maxSlAtr * atrC
+        why      := "SL too wide (" + fmt(risk) + " = " + str.tostring(risk / atrC, "#.#") + " ATR)"
+        S.fSlMax := S.fSlMax + 1
+    else if not lim and maxChase > 0 and chase > maxChase * risk
+        why      := "price already ran " + str.tostring(chase / risk, "#.##") + "R from the zone"
+        S.fChase := S.fChase + 1
+    if why == ""
+        buySig  := isBuy
+        sellSig := not isBuy
+        lastSig := time
+        label lb = drawSignal(isBuy, lim, en, sl, tp, risk)
+        trades.push(Trade.new(lb, isBuy, en, sl, tp, risk, time_close, bar_index + limitBars, not lim, (spreadPx + (lim ? 1 : 2) * slipPx) / risk))
+        if showSLTP
+            line.delete(slLine)
+            line.delete(tpLine)
+            line.delete(enLine)
+            enLine := line.new(bar_index, en, bar_index + 20, en, color = chart.fg_color, style = line.style_dotted)
+            slLine := line.new(bar_index, sl, bar_index + 20, sl, color = sellCol, width = 2)
+            tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
+    else if showSkipped
+        label.new(bar_index, close, "×", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = color(na), textcolor = color.gray,
+             style = label.style_none, size = size.normal, tooltip = (isBuy ? "BUY" : "SELL") + " skipped: " + why)
 
 if barstate.islast
     refreshDisplay()
@@ -597,30 +793,39 @@ statRow(table t, int row, string k, string v, color c) =>
     t.cell(0, row, k, text_color = chart.fg_color, text_size = size.small, text_halign = text.align_left)
     t.cell(1, row, v, text_color = c, text_size = size.small, text_halign = text.align_right)
 
+rStr(float r) => (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + " R"
+
+sideStat(int n, int w, float r) =>
+    n > 0 ? str.tostring(n) + " · " + str.tostring(100.0 * w / n, "#") + "% · " + rStr(r) : "-"
+
 if showStats and showSig and barstate.islast
-    var table st = table.new(posOf(statsPos), 2, 9, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table st = table.new(posOf(statsPos), 2, 15, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
-    int   w     = buyWin + sellWin
-    int   l     = buyLoss + sellLoss
-    int   done  = w + l
-    float wr    = done > 0 ? 100.0 * w / done : na
-    float netR  = w * rrRatio - l
-    float pf    = l > 0 ? w * rrRatio / l : na
-    float beWR  = 100.0 / (1 + rrRatio)
-    string bWR  = buyWin + buyLoss > 0 ? str.tostring(100.0 * buyWin / (buyWin + buyLoss), "#.#") + "%" : "-"
-    string sWR  = sellWin + sellLoss > 0 ? str.tostring(100.0 * sellWin / (sellWin + sellLoss), "#.#") + "%" : "-"
-    color  good = msBullCol
-    color  bad  = msBearCol
-    st.cell(0, 0, "Backtest (R:R 1:" + str.tostring(rrRatio) + ")", text_color = chart.fg_color, text_size = size.small)
+    int   closed = S.tp + S.sl + S.tm
+    int   wins   = S.bW + S.sW
+    float wr     = closed > 0 ? 100.0 * wins / closed : na
+    float expR   = closed > 0 ? S.sumR / closed : na
+    float pf     = S.gLoss > 0 ? S.gWin / S.gLoss : na
+    color good   = msBullCol
+    color bad    = msBearCol
+    color fg     = chart.fg_color
+    st.cell(0, 0, "Backtest · after costs · R:R 1:" + str.tostring(rrRatio), text_color = fg, text_size = size.small)
     st.merge_cells(0, 0, 1, 0)
-    statRow(st, 1, "Trades (closed / open)", str.tostring(done) + " / " + str.tostring(openTrades.size()), chart.fg_color)
-    statRow(st, 2, "Win / Loss", str.tostring(w) + " / " + str.tostring(l), chart.fg_color)
-    statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", na(wr) ? chart.fg_color : wr >= beWR ? good : bad)
-    statRow(st, 4, "Break-even win rate", str.tostring(beWR, "#.#") + "%", chart.fg_color)
-    statRow(st, 5, "BUY win rate", bWR + " (" + str.tostring(buyWin + buyLoss) + ")", chart.fg_color)
-    statRow(st, 6, "SELL win rate", sWR + " (" + str.tostring(sellWin + sellLoss) + ")", chart.fg_color)
-    statRow(st, 7, "Net result", (netR >= 0 ? "+" : "") + str.tostring(netR, "#.#") + " R", netR >= 0 ? good : bad)
-    statRow(st, 8, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? chart.fg_color : pf >= 1 ? good : bad)
+    statRow(st, 1, "Trades (closed / open)", str.tostring(closed) + " / " + str.tostring(trades.size()), fg)
+    statRow(st, 2, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
+    statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
+    statRow(st, 4, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
+    statRow(st, 5, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
+    statRow(st, 6, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
+    statRow(st, 7, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
+    statRow(st, 8, "Max losing streak", str.tostring(S.maxStreak), fg)
+    statRow(st, 9, "Avg SL / cost", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
+    statRow(st, 10, "Avg hold", closed > 0 ? str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
+    statRow(st, 11, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
+    statRow(st, 12, "SELL (n · win · net)", sideStat(S.sN, S.sW, S.sR), fg)
+    statRow(st, 13, "Filtered: time", "session " + str.tostring(S.fSess) + " · news " + str.tostring(S.fNews) + " · vol " + str.tostring(S.fVol), fg)
+    statRow(st, 14, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
+         " · in pos " + str.tostring(S.fPos) + (entryMode == "Limit at zone edge" ? " · unfilled " + str.tostring(S.miss) : ""), fg)
 
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
