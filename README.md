@@ -46,11 +46,12 @@
 | Max OB height (x ATR) | จำกัดความหนา OB, `Trim` = ตัดเหลือส่วนที่ใกล้ราคา, `Skip` = ไม่แสดง |
 | Label size | ขนาดตัวอักษรป้ายโซน |
 | BOS / CHoCH | `All` / `CHoCH only` / `None` |
-| Trend filter | `HTF trend` (ค่าเริ่มต้น) = BUY เฉพาะเมื่อ HTF สูงสุดที่เปิดอยู่เป็นขาขึ้น, `Chart trend`, `Both`, `None` |
-| Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `HTF only` (ค่าเริ่มต้น) / `All TF`) |
+| Signal frequency | `Low` / `Medium` (ค่าเริ่มต้น) / `High` / `Custom` ตั้งค่าตัวกรองสัญญาณทั้งหมดในคลิกเดียว (Custom = ใช้ค่าที่ตั้งเองด้านล่าง) |
+| Trend filter | `HTF trend or CHoCH` = BUY เมื่อ HTF เป็นขาขึ้น หรือ TF กราฟเกิด CHoCH กลับเป็นขาขึ้นแล้ว, `HTF trend`, `Chart trend`, `Both`, `None` |
+| Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `HTF only` / `HTF + chart OB` / `All TF`) |
 | Premium / Discount filter | BUY เฉพาะครึ่งล่างของกรอบราคา HTF (N แท่งล่าสุด), SELL เฉพาะครึ่งบน |
-| Min move away before retest (x ATR) | ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ก่อน แล้วย้อนกลับมาแตะ จึงนับเป็นสัญญาณ (ค่าเริ่มต้น 1 ATR) |
-| Min minutes between signals | ระยะเวลาขั้นต่ำระหว่างสัญญาณ เป็นนาที (ค่าเริ่มต้น 120) |
+| Min move away before retest (x ATR) | ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ก่อน แล้วย้อนกลับมาแตะ จึงนับเป็นสัญญาณ  |
+| Min minutes between signals | ระยะเวลาขั้นต่ำระหว่างสัญญาณ เป็นนาที |
 | R:R | อัตราส่วน TP ต่อ SL |
 | Max OB / FVG stored per TF / side | จำนวนโซนสูงสุดที่เก็บไว้ต่อ TF ต่อฝั่ง |
 | OB mitigation | `Close` = ปิดแท่งทะลุโซน, `Wick` = ไส้เทียนทะลุโซน |
@@ -58,3 +59,13 @@
 | Hide mitigated zones | ซ่อนโซนที่ถูกใช้แล้ว |
 
 > ⚠️ อินดิเคเตอร์นี้เป็นเครื่องมือช่วยวิเคราะห์ ไม่ใช่คำแนะนำการลงทุน
+
+### ระดับสัญญาณ (Signal frequency)
+
+| | Low | Medium | High |
+|---|---|---|---|
+| โซนที่ใช้ | HTF | HTF + OB ของกราฟ | ทุกโซน |
+| ตัวกรองเทรนด์ | HTF | HTF หรือ CHoCH กลับตัว | HTF หรือ CHoCH กลับตัว |
+| Premium / Discount | ✅ | ✅ | ❌ |
+| ระยะออกจากโซนก่อนกลับมาแตะ | 1.0 ATR | 0.75 ATR | 0.5 ATR |
+| ระยะห่างระหว่างสัญญาณ | 120 นาที | 60 นาที | 30 นาที |

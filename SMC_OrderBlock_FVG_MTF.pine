@@ -57,17 +57,19 @@ color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_M
 
 bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
      tooltip = "BUY: ราคาย่อลงแตะโซน Bullish (OB/FVG) แล้วปิดแท่งเขียวกลับขึ้นเหนือโซน\nSELL: ราคาเด้งขึ้นแตะโซน Bearish แล้วปิดแท่งแดงกลับลงใต้โซน\nแต่ละโซนให้สัญญาณได้ครั้งเดียว")
-string sigFilter   = input.string("HTF trend", "Trend filter", options = ["HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
-     tooltip = "HTF trend = BUY เฉพาะเมื่อเทรนด์ของ HTF ที่สูงที่สุดที่เปิดอยู่เป็นขาขึ้น (SELL กลับกัน)\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
+string sigPreset   = input.string("Medium", "Signal frequency", options = ["Low", "Medium", "High", "Custom"], group = G_SIG,
+     tooltip = "Low = น้อยแต่คัดมาก (โซน HTF, ตามเทรนด์ HTF, Premium/Discount, รอ 120 นาที)\nMedium = สมดุล (โซน HTF + OB ของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH, Premium/Discount, รอ 60 นาที)\nHigh = สัญญาณมาก (ทุกโซน, ไม่ใช้ Premium/Discount, รอ 30 นาที)\nCustom = ใช้ค่าด้านล่างทั้งหมด")
+string sigFilter   = input.string("HTF trend or CHoCH", "Trend filter (Custom)", options = ["HTF trend or CHoCH", "HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
+     tooltip = "HTF trend or CHoCH = BUY เมื่อเทรนด์ HTF เป็นขาขึ้น หรือ TF กราฟเกิด CHoCH กลับเป็นขาขึ้นแล้ว (SELL กลับกัน)\nHTF trend = ตามเทรนด์ HTF ที่สูงที่สุดที่เปิดอยู่เท่านั้น\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
 string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
-string sigZoneTF   = input.string("HTF only", "", options = ["All TF", "HTF only"], inline = "sz", group = G_SIG,
-     tooltip = "HTF only = ใช้เฉพาะโซนของ HTF (สัญญาณน้อยแต่คุณภาพดีกว่า) ถ้าไม่มี HTF ที่สูงกว่ากราฟจะใช้โซนของกราฟแทน")
-bool   usePD       = input.bool(true, "Premium / Discount filter", inline = "pd", group = G_SIG,
+string sigZoneTF   = input.string("HTF + chart OB", "", options = ["All TF", "HTF + chart OB", "HTF only"], inline = "sz", group = G_SIG,
+     tooltip = "(Custom) HTF only = ใช้เฉพาะโซนของ HTF, HTF + chart OB = เพิ่ม OB ของ TF กราฟ, All TF = ทุกโซน\nถ้าไม่มี HTF ที่สูงกว่ากราฟจะใช้โซนของกราฟแทน")
+bool   usePD       = input.bool(true, "Premium / Discount filter (Custom)", inline = "pd", group = G_SIG,
      tooltip = "BUY เฉพาะเมื่อราคาอยู่ครึ่งล่าง (Discount) ของกรอบราคา HTF, SELL เฉพาะครึ่งบน (Premium)\nกรอบราคา = High/Low สูงสุด-ต่ำสุดของ N แท่งล่าสุดบน TF ที่ใช้กรองเทรนด์")
 int    pdLen       = input.int(50, "Bars", minval = 10, maxval = 500, inline = "pd", group = G_SIG)
-float  sigDepart   = input.float(1.0, "Min move away before retest (x ATR)", minval = 0, step = 0.25, group = G_SIG,
+float  sigDepart   = input.float(0.75, "Min move away before retest (x ATR, Custom)", minval = 0, step = 0.25, group = G_SIG,
      tooltip = "ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ (เทียบ ATR) ก่อน แล้วค่อยย้อนกลับมาแตะ จึงนับเป็นสัญญาณ\nกันสัญญาณหลอกจากโซนที่เพิ่งเกิดหรือราคายังวนอยู่ในโซน")
-int    sigCooldown = input.int(120, "Min minutes between signals", minval = 0, step = 15, group = G_SIG,
+int    sigCooldown = input.int(60, "Min minutes between signals (Custom)", minval = 0, step = 15, group = G_SIG,
      tooltip = "ระยะเวลาขั้นต่ำระหว่างสัญญาณ (นาที) ใช้เวลาจริงจึงได้ผลเท่ากันทุก TF")
 bool   showSLTP    = input.bool(true, "Show SL / TP (last signal)", inline = "sltp", group = G_SIG)
 float  rrRatio     = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "sltp", group = G_SIG,
@@ -76,6 +78,14 @@ color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
 color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
+
+// Effective signal settings (preset or custom)
+bool   isCustom = sigPreset == "Custom"
+string eFilter  = isCustom ? sigFilter   : sigPreset == "Low" ? "HTF trend" : "HTF trend or CHoCH"
+string eZoneTF  = isCustom ? sigZoneTF   : sigPreset == "Low" ? "HTF only" : sigPreset == "Medium" ? "HTF + chart OB" : "All TF"
+bool   eUsePD   = isCustom ? usePD       : sigPreset != "High"
+float  eDepart  = isCustom ? sigDepart   : sigPreset == "Low" ? 1.0 : sigPreset == "Medium" ? 0.75 : 0.5
+int    eCool    = isCustom ? sigCooldown : sigPreset == "Low" ? 120 : sigPreset == "Medium" ? 60 : 30
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
 float  atrC    = ta.atr(14)
@@ -282,7 +292,7 @@ updateZones(array<Zone> zs) =>
                         z.bx.set_bgcolor(color.new(chart.fg_color, 92))
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
-                else if not z.departed and (z.bull ? low > z.top + sigDepart * atrC : high < z.bot - sigDepart * atrC)
+                else if not z.departed and (z.bull ? low > z.top + eDepart * atrC : high < z.bot - eDepart * atrC)
                     z.departed := true
                 else if high >= z.bot and low <= z.top
                     if z.bull
@@ -337,7 +347,7 @@ scanSignals(array<Zone> zs, bool allowBuy, bool allowSell, int minRank) =>
     float sTop = na
     for z in zs
         bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
-        if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and z.rank >= minRank and typeOk
+        if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and (z.rank >= minRank or (eZoneTF == "HTF + chart OB" and z.isOB)) and typeOk
             if allowBuy and z.bull and low <= z.top and close > z.top and close > open
                 buy        := true
                 z.signaled := true
@@ -438,20 +448,22 @@ string chartTag = tfName(timeframe.period)
 // BUY / SELL SIGNALS
 //==============================================================================
 int   htfBias = v3 ? t3 : v2 ? t2 : v1 ? t1 : cTrend
-int   sigMinRank = sigZoneTF == "HTF only" and (v1 or v2 or v3) ? 1 : 0
+int   sigMinRank = eZoneTF != "All TF" and (v1 or v2 or v3) ? 1 : 0
 
 // Premium / Discount of the bias timeframe's recent range (confirmed bars only)
 string biasTF = v3 ? tf3 : v2 ? tf2 : v1 ? tf1 : timeframe.period
 [pdHi, pdLo] = request.security(syminfo.tickerid, biasTF, [ta.highest(high, pdLen)[1], ta.lowest(low, pdLen)[1]], lookahead = barmerge.lookahead_on)
 float pdMid   = (pdHi + pdLo) / 2
-bool  pdBuy   = not usePD or na(pdMid) or close < pdMid
-bool  pdSell  = not usePD or na(pdMid) or close > pdMid
-bool  biasBuy  = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias > 0) or
-     (sigFilter == "Chart trend" and cTrend > 0) or (sigFilter == "Both" and htfBias > 0 and cTrend > 0)
-bool  biasSell = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias < 0) or
-     (sigFilter == "Chart trend" and cTrend < 0) or (sigFilter == "Both" and htfBias < 0 and cTrend < 0)
+bool  pdBuy   = not eUsePD or na(pdMid) or close < pdMid
+bool  pdSell  = not eUsePD or na(pdMid) or close > pdMid
+bool  biasBuy  = eFilter == "None" or (eFilter == "HTF trend" and htfBias > 0) or
+     (eFilter == "HTF trend or CHoCH" and (htfBias > 0 or cTrend > 0)) or
+     (eFilter == "Chart trend" and cTrend > 0) or (eFilter == "Both" and htfBias > 0 and cTrend > 0)
+bool  biasSell = eFilter == "None" or (eFilter == "HTF trend" and htfBias < 0) or
+     (eFilter == "HTF trend or CHoCH" and (htfBias < 0 or cTrend < 0)) or
+     (eFilter == "Chart trend" and cTrend < 0) or (eFilter == "Both" and htfBias < 0 and cTrend < 0)
 var int lastSig = na
-bool  coolOk   = na(lastSig) or time - lastSig >= sigCooldown * 60000
+bool  coolOk   = na(lastSig) or time - lastSig >= eCool * 60000
 bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy and pdBuy
 bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell and pdSell
 
