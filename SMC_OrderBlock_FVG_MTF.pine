@@ -61,7 +61,10 @@ string sigFilter   = input.string("HTF trend", "Trend filter", options = ["HTF t
      tooltip = "HTF trend = BUY เฉพาะเมื่อเทรนด์ของ HTF ที่สูงที่สุดที่เปิดอยู่เป็นขาขึ้น (SELL กลับกัน)\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
 string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
 string sigZoneTF   = input.string("All TF", "", options = ["All TF", "HTF only"], inline = "sz", group = G_SIG)
-int    sigCooldown = input.int(5, "Min bars between signals", minval = 0, group = G_SIG)
+float  sigDepart   = input.float(1.0, "Min move away before retest (x ATR)", minval = 0, step = 0.25, group = G_SIG,
+     tooltip = "ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ (เทียบ ATR) ก่อน แล้วค่อยย้อนกลับมาแตะ จึงนับเป็นสัญญาณ\nกันสัญญาณหลอกจากโซนที่เพิ่งเกิดหรือราคายังวนอยู่ในโซน")
+int    sigCooldown = input.int(120, "Min minutes between signals", minval = 0, step = 15, group = G_SIG,
+     tooltip = "ระยะเวลาขั้นต่ำระหว่างสัญญาณ (นาที) ใช้เวลาจริงจึงได้ผลเท่ากันทุก TF")
 bool   showSLTP    = input.bool(true, "Show SL / TP (last signal)", inline = "sltp", group = G_SIG)
 float  rrRatio     = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "sltp", group = G_SIG,
      tooltip = "SL = ใต้/เหนือขอบโซน + 0.1 ATR, TP = Entry ± R:R × ความเสี่ยง")
@@ -71,6 +74,7 @@ color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
+float  atrC    = ta.atr(14)
 string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
 
 //==============================================================================
@@ -90,6 +94,7 @@ type Zone
     int    born        // chart bar_index when the zone was drawn
     bool   mitigated = false
     bool   signaled  = false
+    bool   departed  = false   // price moved away from the zone at least once
 
 //==============================================================================
 // DETECTION (runs on any timeframe, also inside request.security)
@@ -273,6 +278,8 @@ updateZones(array<Zone> zs) =>
                         z.bx.set_bgcolor(color.new(chart.fg_color, 92))
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
+                else if not z.departed and (z.bull ? low > z.top + sigDepart * atrC : high < z.bot - sigDepart * atrC)
+                    z.departed := true
                 else if high >= z.bot and low <= z.top
                     if z.bull
                         bullTouch := true
@@ -327,7 +334,7 @@ scanSignals(array<Zone> zs, bool allowBuy, bool allowSell) =>
     int   minRank = sigZoneTF == "HTF only" ? 1 : 0
     for z in zs
         bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
-        if not z.mitigated and not z.signaled and bar_index > z.born and z.rank >= minRank and typeOk
+        if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and z.rank >= minRank and typeOk
             if allowBuy and z.bull and low <= z.top and close > z.top and close > open
                 buy        := true
                 z.signaled := true
@@ -433,7 +440,7 @@ bool  biasBuy  = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias > 
 bool  biasSell = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias < 0) or
      (sigFilter == "Chart trend" and cTrend < 0) or (sigFilter == "Both" and htfBias < 0 and cTrend < 0)
 var int lastSig = na
-bool  coolOk   = na(lastSig) or bar_index - lastSig >= sigCooldown
+bool  coolOk   = na(lastSig) or time - lastSig >= sigCooldown * 60000
 bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy
 bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell
 
@@ -448,7 +455,11 @@ if buySig and sellSig
     buySig  := false
     sellSig := false
 
-float sigAtr = ta.atr(14)
+markTouched(array<Zone> zs, bool bull) =>
+    for z in zs
+        if z.bull == bull and high >= z.bot and low <= z.top
+            z.signaled := true
+
 minNa(float a, float b) => na(a) ? b : na(b) ? a : math.min(a, b)
 maxNa(float a, float b) => na(a) ? b : na(b) ? a : math.max(a, b)
 var line slLine = na
@@ -457,7 +468,7 @@ var line enLine = na
 
 drawSignal(bool isBuy, float zoneEdge) =>
     float entry = close
-    float sl    = isBuy ? zoneEdge - 0.1 * sigAtr : zoneEdge + 0.1 * sigAtr
+    float sl    = isBuy ? zoneEdge - 0.1 * atrC : zoneEdge + 0.1 * atrC
     float tp    = entry + (entry - sl) * rrRatio
     color c     = isBuy ? buyCol : sellCol
     string tip  = (isBuy ? "BUY" : "SELL") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(rrRatio) + ")"
@@ -467,7 +478,12 @@ drawSignal(bool isBuy, float zoneEdge) =>
     [entry, sl, tp]
 
 if buySig or sellSig
-    lastSig := bar_index
+    lastSig := time
+    // One signal per price area: retire every same-side zone the signal bar touched (all TFs)
+    markTouched(zC, buySig)
+    markTouched(zH1, buySig)
+    markTouched(zH2, buySig)
+    markTouched(zH3, buySig)
     float edge = buySig ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
     [en, sl, tp] = drawSignal(buySig, edge)
     if showSLTP
