@@ -93,8 +93,8 @@ bool   statsCompact = input.bool(true, "Compact stats table", group = G_SIG,
 
 string entryModel  = input.string("LTF CHoCH (sweep + displacement)", "Entry model", options = ["LTF CHoCH (sweep + displacement)", "Zone retest (bar close)"], group = G_LTF,
      tooltip = "LTF CHoCH = ราคาเข้าโซน HTF → กวาด swing low/high ย่อยของกราฟ → CHoCH ด้วยแท่งแรงที่ทิ้ง FVG → เข้าตอนราคาย้อนมาที่ FVG, SL หลังจุดที่กวาด (กราฟ = TF สำหรับเข้าเทรด แนะนำ 3m–5m)\nZone retest = แบบเดิม: ไส้เทียนแตะโซนแล้วปิดกลับ เข้าที่ราคาปิด")
-string ltfEntry    = input.string("FVG edge", "LTF entry", options = ["FVG edge", "FVG 50%", "Market on confirm"], group = G_LTF,
-     tooltip = "FVG edge = Limit ที่ขอบ FVG ฝั่งใกล้ราคา (ได้เข้าบ่อยกว่า)\nFVG 50% = Limit ที่กึ่งกลาง FVG (R:R ดีกว่า แต่บางครั้งไม่ได้เข้า)\nMarket on confirm = เข้าทันทีที่ราคาปิดแท่งยืนยัน")
+string ltfEntry    = input.string("Market on confirm", "LTF entry", options = ["Market on confirm", "FVG edge", "FVG 50%"], group = G_LTF,
+     tooltip = "Market on confirm = เข้าทันทีที่ราคาปิดแท่งยืนยัน (ได้เข้าทุกสัญญาณ)\nFVG edge = Limit ที่ขอบ FVG ฝั่งใกล้ราคา (SL แคบกว่า แต่ราว ๆ ครึ่งหนึ่งไม่ได้เข้า)\nFVG 50% = Limit ที่กึ่งกลาง FVG (R:R ดีที่สุด แต่ได้เข้าน้อยที่สุด)")
 bool   needSweep   = input.bool(true, "Require liquidity sweep", group = G_LTF,
      tooltip = "ต้องมีไส้เทียนทะลุ swing low (BUY) / swing high (SELL) ย่อยล่าสุด ระหว่างที่ราคาอยู่ในโซน ก่อนเกิด CHoCH")
 int    ltfLen      = input.int(2, "Internal swing length", minval = 1, maxval = 10, group = G_LTF,
@@ -137,7 +137,7 @@ bool   usePartial  = input.bool(true, "Partial take-profit + break-even", group 
 float  tp1R        = input.float(1.0, "TP1 at x R", minval = 0.25, step = 0.25, inline = "tp1", group = G_EXIT)
 float  tp1Pct      = input.float(50, "close %", minval = 1, maxval = 99, step = 5, inline = "tp1", group = G_EXIT,
      tooltip = "ค่าเริ่มต้น: ปิด 50% ที่ 1R แล้วเลื่อน SL ไปจุดคุ้มทุน (ต้องน้อยกว่า R:R ของ TP สุดท้าย)")
-float  minRoomR    = input.float(1.0, "Skip if opposing HTF zone < x R away", minval = 0, step = 0.25, group = G_EXIT,
+float  minRoomR    = input.float(0.0, "Skip if opposing HTF zone < x R away", minval = 0, step = 0.25, group = G_EXIT,
      tooltip = "ไม่เข้าเทรดถ้ามีโซน HTF ฝั่งตรงข้าม (เช่น BUY แต่มีโซน Bearish ของ HTF อยู่ข้างบน) อยู่ใกล้กว่า x เท่าของ Risk เพราะราคามักชะลอหรือกลับตัวที่โซนนั้นก่อนถึงเป้า (0 = ปิด)")
 
 float  acctSize    = input.float(10000, "Account balance", minval = 0, step = 1000, group = G_RISK)
@@ -784,8 +784,7 @@ if barstate.isconfirmed and trades.size() > 0
         bool  done = false
         if not t.filled
             bool hitFill = t.isBuy ? low + spreadPx <= t.entry : high >= t.entry
-            float tgt = na(t.tp1) ? t.tp : t.tp1     // price reached the first target without us -> cancel
-            bool gone = t.isBuy ? high >= tgt : low + spreadPx <= tgt
+            bool gone = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp     // price reached the target without us -> cancel
             if hitFill
                 t.filled   := true
                 t.openTime := time
