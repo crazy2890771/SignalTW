@@ -132,7 +132,8 @@ bool   useVol      = input.bool(true, "ATR / avg ATR between", inline = "vol", g
 float  volMin      = input.float(0.6, "", minval = 0, step = 0.1, inline = "vol", group = G_TIME)
 float  volMax      = input.float(2.5, "and", minval = 0, step = 0.1, inline = "vol", group = G_TIME,
      tooltip = "ATR14 เทียบค่าเฉลี่ย 100 แท่ง: ต่ำเกิน = ตลาดเงียบ spread กินกำไร, สูงเกิน = ช่วงข่าว/กระชาก SL หลุดง่าย")
-bool   shadeSess   = input.bool(true, "Shade sessions / blocked times", group = G_TIME)
+bool   shadeSess   = input.bool(false, "Shade sessions / blocked times", group = G_TIME,
+     tooltip = "แรเงาพื้นหลัง: สีฟ้า = ช่วง session ที่เทรด, สีแดง = ช่วงห้ามเทรด (rollover / ข่าว)")
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 
