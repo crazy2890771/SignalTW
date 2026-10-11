@@ -12,6 +12,7 @@ const string G_DISP = "Display (ลดความรก)"
 const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
+const string G_SIG  = "BUY / SELL Signals"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
@@ -54,6 +55,19 @@ string msMode      = input.string("CHoCH only", "BOS / CHoCH (chart TF)", option
 color  msBullCol   = input.color(#089981, "Bullish", inline = "msc", group = G_MS)
 color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_MS)
 
+bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
+     tooltip = "BUY: ราคาย่อลงแตะโซน Bullish (OB/FVG) แล้วปิดแท่งเขียวกลับขึ้นเหนือโซน\nSELL: ราคาเด้งขึ้นแตะโซน Bearish แล้วปิดแท่งแดงกลับลงใต้โซน\nแต่ละโซนให้สัญญาณได้ครั้งเดียว")
+string sigFilter   = input.string("HTF trend", "Trend filter", options = ["HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
+     tooltip = "HTF trend = BUY เฉพาะเมื่อเทรนด์ของ HTF ที่สูงที่สุดที่เปิดอยู่เป็นขาขึ้น (SELL กลับกัน)\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
+string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
+string sigZoneTF   = input.string("All TF", "", options = ["All TF", "HTF only"], inline = "sz", group = G_SIG)
+int    sigCooldown = input.int(5, "Min bars between signals", minval = 0, group = G_SIG)
+bool   showSLTP    = input.bool(true, "Show SL / TP (last signal)", inline = "sltp", group = G_SIG)
+float  rrRatio     = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "sltp", group = G_SIG,
+     tooltip = "SL = ใต้/เหนือขอบโซน + 0.1 ATR, TP = Entry ± R:R × ความเสี่ยง")
+color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
+color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
+
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
@@ -73,7 +87,9 @@ type Zone
     int    rank        // 0 = chart TF, 1..3 = HTF slot (higher = more important)
     string tag         // timeframe name, e.g. "4H"
     string lbl         // base label text, e.g. "OB 4H"
+    int    born        // chart bar_index when the zone was drawn
     bool   mitigated = false
+    bool   signaled  = false
 
 //==============================================================================
 // DETECTION (runs on any timeframe, also inside request.security)
@@ -219,7 +235,7 @@ addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color
          border_color = color.new(c, 30), border_style = rank > 0 ? line.style_dashed : line.style_solid,
          bgcolor = c, text = lbl, text_size = lblSize, text_color = color.new(c, 0),
          text_halign = text.align_right, text_valign = rank > 0 ? text.align_top : text.align_bottom)
-    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl))
+    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl, bar_index))
     // Keep at most maxN zones of this kind (newest first)
     array<int> drop = array.new<int>()
     int cnt = 0
@@ -300,6 +316,27 @@ htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
     [nb, ns, nbf, nsf] = handleSignals(isNew, rank, tfName(tf), zs,
          a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4)
     [valid, t, nb or nbf, ns or nsf]
+
+// BUY: wick into a bullish zone, bullish candle closes back above it (SELL mirrored).
+// Returns [buy, buy zone bottom, sell, sell zone top]; a zone fires only once.
+scanSignals(array<Zone> zs, bool allowBuy, bool allowSell) =>
+    bool  buy  = false
+    bool  sell = false
+    float bBot = na
+    float sTop = na
+    int   minRank = sigZoneTF == "HTF only" ? 1 : 0
+    for z in zs
+        bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
+        if not z.mitigated and not z.signaled and bar_index > z.born and z.rank >= minRank and typeOk
+            if allowBuy and z.bull and low <= z.top and close > z.top and close > open
+                buy        := true
+                z.signaled := true
+                bBot       := na(bBot) ? z.bot : math.min(bBot, z.bot)
+            if allowSell and not z.bull and high >= z.bot and close < z.bot and close < open
+                sell       := true
+                z.signaled := true
+                sTop       := na(sTop) ? z.top : math.max(sTop, z.top)
+    [buy, bBot, sell, sTop]
 
 //==============================================================================
 // STATE
@@ -387,6 +424,60 @@ string chartTag = tfName(timeframe.period)
 [v2, t2, nBull2, nBear2] = htfSlot(tf2, useTF2, zH2, 2)
 [v3, t3, nBull3, nBear3] = htfSlot(tf3, useTF3, zH3, 3)
 
+//==============================================================================
+// BUY / SELL SIGNALS
+//==============================================================================
+int   htfBias = v3 ? t3 : v2 ? t2 : v1 ? t1 : cTrend
+bool  biasBuy  = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias > 0) or
+     (sigFilter == "Chart trend" and cTrend > 0) or (sigFilter == "Both" and htfBias > 0 and cTrend > 0)
+bool  biasSell = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias < 0) or
+     (sigFilter == "Chart trend" and cTrend < 0) or (sigFilter == "Both" and htfBias < 0 and cTrend < 0)
+var int lastSig = na
+bool  coolOk   = na(lastSig) or bar_index - lastSig >= sigCooldown
+bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy
+bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell
+
+[sb0, sbb0, ss0, sst0] = scanSignals(zC, canBuy, canSell)
+[sb1, sbb1, ss1, sst1] = scanSignals(zH1, canBuy, canSell)
+[sb2, sbb2, ss2, sst2] = scanSignals(zH2, canBuy, canSell)
+[sb3, sbb3, ss3, sst3] = scanSignals(zH3, canBuy, canSell)
+bool  buySig  = sb0 or sb1 or sb2 or sb3
+bool  sellSig = ss0 or ss1 or ss2 or ss3
+// Conflicting signals on the same bar cancel each other
+if buySig and sellSig
+    buySig  := false
+    sellSig := false
+
+float sigAtr = ta.atr(14)
+minNa(float a, float b) => na(a) ? b : na(b) ? a : math.min(a, b)
+maxNa(float a, float b) => na(a) ? b : na(b) ? a : math.max(a, b)
+var line slLine = na
+var line tpLine = na
+var line enLine = na
+
+drawSignal(bool isBuy, float zoneEdge) =>
+    float entry = close
+    float sl    = isBuy ? zoneEdge - 0.1 * sigAtr : zoneEdge + 0.1 * sigAtr
+    float tp    = entry + (entry - sl) * rrRatio
+    color c     = isBuy ? buyCol : sellCol
+    string tip  = (isBuy ? "BUY" : "SELL") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(rrRatio) + ")"
+    label.new(bar_index, close, isBuy ? "BUY" : "SELL", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
+         textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
+    alert(syminfo.ticker + " " + (isBuy ? "BUY" : "SELL") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
+    [entry, sl, tp]
+
+if buySig or sellSig
+    lastSig := bar_index
+    float edge = buySig ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
+    [en, sl, tp] = drawSignal(buySig, edge)
+    if showSLTP
+        line.delete(slLine)
+        line.delete(tpLine)
+        line.delete(enLine)
+        enLine := line.new(bar_index, en, bar_index + 20, en, color = chart.fg_color, style = line.style_dotted)
+        slLine := line.new(bar_index, sl, bar_index + 20, sl, color = sellCol, width = 2)
+        tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
+
 if barstate.islast
     refreshDisplay()
 
@@ -409,6 +500,8 @@ alertcondition(anyBull, "New Bullish OB/FVG (any TF)", "{{ticker}} new Bullish O
 alertcondition(anyBear, "New Bearish OB/FVG (any TF)", "{{ticker}} new Bearish Order Block / FVG")
 alertcondition(bullTouch, "Price in Bullish zone", "{{ticker}} price entered Bullish OB/FVG zone @ {{close}}")
 alertcondition(bearTouch, "Price in Bearish zone", "{{ticker}} price entered Bearish OB/FVG zone @ {{close}}")
+alertcondition(buySig, "BUY signal", "{{ticker}} BUY @ {{close}}")
+alertcondition(sellSig, "SELL signal", "{{ticker}} SELL @ {{close}}")
 alertcondition(msShow and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
 alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
 

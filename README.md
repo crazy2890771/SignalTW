@@ -13,6 +13,7 @@
 | **ลดความรก** | แสดงเฉพาะโซนที่ใกล้ราคาที่สุด N โซนต่อฝั่ง, โซน TF เล็กที่ซ้อนอยู่ในโซน TF ใหญ่จะถูกรวมเป็นป้ายเดียว เช่น `OB 4H+1H`, OB ที่หนาเกินจะถูกตัดตาม ATR, FVG ที่ซ้อนกันใน TF เดียวกันจะรวมเป็นโซนเดียว |
 | **Mitigation** | โซนที่ราคาเข้าไปใช้แล้วจะถูกซ่อน (หรือหยุดยืดและทำให้จางลง ปรับได้ในการตั้งค่า) |
 | **BOS / CHoCH** | เส้นและป้ายโครงสร้างตลาดบน TF ปัจจุบัน (ค่าเริ่มต้นแสดงเฉพาะ CHoCH) |
+| **BUY / SELL** | BUY เมื่อราคาย่อลงแตะโซน Bullish (OB/FVG) แล้วปิดแท่งเขียวกลับขึ้นเหนือโซน, SELL กลับกัน กรองด้วยเทรนด์ HTF พร้อมเส้น Entry / SL / TP ของสัญญาณล่าสุด (เอาเมาส์ชี้ป้ายเพื่อดูราคา) |
 | **Dashboard** | ตารางแสดงเทรนด์ของแต่ละ TF |
 | **Alerts** | แจ้งเตือนเมื่อเกิด OB/FVG ใหม่, ราคาเข้าโซน, เกิด BOS/CHoCH |
 
@@ -33,7 +34,7 @@
 
 - กด **Create Alert** → Condition เลือก `SignalTW OB/FVG`
   - เลือก **Any alert() function call** เพื่อรับข้อความละเอียด (ระบุ TF และช่วงราคาของโซน)
-  - หรือเลือกเงื่อนไขเฉพาะ เช่น `New Bullish OB/FVG (any TF)`, `Price in Bullish zone`, `Bullish BOS/CHoCH`
+  - หรือเลือกเงื่อนไขเฉพาะ เช่น `BUY signal`, `SELL signal`, `New Bullish OB/FVG (any TF)`, `Price in Bullish zone`, `Bullish BOS/CHoCH`
 
 ## การตั้งค่าที่สำคัญ
 
@@ -45,6 +46,10 @@
 | Max OB height (x ATR) | จำกัดความหนา OB, `Trim` = ตัดเหลือส่วนที่ใกล้ราคา, `Skip` = ไม่แสดง |
 | Label size | ขนาดตัวอักษรป้ายโซน |
 | BOS / CHoCH | `All` / `CHoCH only` / `None` |
+| Trend filter | `HTF trend` (ค่าเริ่มต้น) = BUY เฉพาะเมื่อ HTF สูงสุดที่เปิดอยู่เป็นขาขึ้น, `Chart trend`, `Both`, `None` |
+| Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `All TF` / `HTF only`) |
+| Min bars between signals | ระยะห่างขั้นต่ำระหว่างสัญญาณ |
+| R:R | อัตราส่วน TP ต่อ SL |
 | Max OB / FVG stored per TF / side | จำนวนโซนสูงสุดที่เก็บไว้ต่อ TF ต่อฝั่ง |
 | OB mitigation | `Close` = ปิดแท่งทะลุโซน, `Wick` = ไส้เทียนทะลุโซน |
 | Min gap size (%) | กรอง FVG ที่เล็กเกินไป |
