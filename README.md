@@ -30,7 +30,8 @@
 ## การดูหลาย TF
 
 - **Chart TF**: โซนของ TF ที่เปิดอยู่ (เปลี่ยน TF กราฟเมื่อไรก็คำนวณใหม่ตาม TF นั้น)
-- **HTF 1/2/3**: เลือก TF ที่สูงกว่าได้ตามต้องการ (ค่าเริ่มต้น 15m / 1H / 4H) เช่น ดูกราฟ 5m แต่เห็น OB/FVG ของ 15m, 1H, 4H
+- **Auto HTF** (ค่าเริ่มต้น): เลือก HTF ให้ตาม TF ของกราฟ: 1m → 5m/15m/1H, 3m–5m → 15m/1H/4H, 15m → 1H/4H/D, 1H → 4H/D/W
+- **HTF 1/2/3**: ปิด Auto HTF แล้วเลือก TF เองได้ (ค่าเริ่มต้น 15m / 1H / 4H)
 - HTF จะแสดงเฉพาะเมื่อสูงกว่า TF ของกราฟ (เช่น เปิดกราฟ 4H ก็จะเห็นเฉพาะโซน 4H และ D)
 
 ## การตั้งแจ้งเตือน
@@ -49,7 +50,7 @@
 | Max OB height (x ATR) | จำกัดความหนา OB, `Trim` = ตัดเหลือส่วนที่ใกล้ราคา, `Skip` = ไม่แสดง |
 | Label size | ขนาดตัวอักษรป้ายโซน |
 | BOS / CHoCH | `All` / `CHoCH only` / `None` |
-| Signal frequency | `Low` / `Medium` (ค่าเริ่มต้น) / `High` / `Custom` ตั้งค่าตัวกรองสัญญาณทั้งหมดในคลิกเดียว (Custom = ใช้ค่าที่ตั้งเองด้านล่าง) |
+| Signal frequency | `Scalp` (ค่าเริ่มต้น) / `High` / `Medium` / `Low` / `Custom` ตั้งค่าตัวกรองสัญญาณทั้งหมดในคลิกเดียว (Custom = ใช้ค่าที่ตั้งเองด้านล่าง) |
 | Trend filter | `HTF trend or CHoCH` = BUY เมื่อ HTF สูงสุดเป็นขาขึ้น หรือ HTF ที่ต่ำที่สุด (เช่น 1H) เกิด CHoCH กลับเป็นขาขึ้นแล้ว, `HTF trend`, `Chart trend`, `Both`, `None` |
 | Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `HTF only` / `HTF + chart OB` / `All TF`) |
 | Premium / Discount filter | BUY เฉพาะครึ่งล่างของกรอบราคา HTF (N แท่งล่าสุด), SELL เฉพาะครึ่งบน |
@@ -64,38 +65,38 @@
 
 ### ระดับสัญญาณ (Signal frequency)
 
-| | Low | Medium | High |
-|---|---|---|---|
-| โซนที่ใช้ | HTF | HTF + OB ของกราฟ | ทุกโซน |
-| ตัวกรองเทรนด์ | HTF | HTF หรือ CHoCH กลับตัวของ HTF ที่ต่ำกว่า | HTF หรือ CHoCH กลับตัวของ HTF ที่ต่ำกว่า |
-| Premium / Discount | ✅ | ✅ | ❌ |
-| ระยะออกจากโซนก่อนกลับมาแตะ | 1.0 ATR | 0.75 ATR | 0.5 ATR |
-| ระยะห่างระหว่างสัญญาณ | 120 นาที | 60 นาที | 30 นาที |
+| | Scalp (ค่าเริ่มต้น) | High | Medium | Low |
+|---|---|---|---|---|
+| โซนที่ใช้ | ทุกโซน (รวมโซนของกราฟ) | ทุกโซน | HTF + OB ของกราฟ | HTF |
+| ตัวกรองเทรนด์ | HTF หรือ CHoCH กลับตัว | HTF หรือ CHoCH กลับตัว | HTF หรือ CHoCH กลับตัว | HTF |
+| Premium / Discount | ❌ | ❌ | ✅ | ✅ |
+| ระยะออกจากโซนก่อนกลับมาแตะ | 0.5 ATR | 0.5 ATR | 0.75 ATR | 1.0 ATR |
+| ระยะห่างระหว่างสัญญาณ | 15 นาที | 30 นาที | 60 นาที | 120 นาที |
 
 ## Entry model
 
 | | LTF CHoCH (ค่าเริ่มต้น) | Zone retest |
 |---|---|---|
 | แนวคิด | ใช้ HTF หาโซน แล้วรอการกลับตัวบน TF ของกราฟ (TF สำหรับเข้าเทรด) | ไส้เทียนแตะโซนแล้วปิดกลับ |
-| TF กราฟที่แนะนำ | **3m – 5m** (โซนจาก 15m / 1H / 4H) | 15m |
+| TF กราฟที่แนะนำ | **1m – 5m** (โซนจาก Auto HTF) | 15m |
 | โซนที่ใช้ | โซนของ HTF (โซนของ TF กราฟใช้เมื่อ Signal zones = `All TF` หรือไม่มี HTF) | ตาม Signal zones |
 
 ขั้นตอนของ **LTF CHoCH** (BUY; SELL กลับกัน)
 
 1. **Arm:** ราคาเข้าโซน Bullish ของ HTF ที่ยังไม่ถูกใช้ (ต้องเคยวิ่งออกจากโซนมาก่อน)
 2. **Sweep:** ไส้เทียนทะลุ swing low ย่อยล่าสุดของกราฟ (กวาด stop / liquidity)
-3. **Displacement:** แท่งเขียวแรง (ตัวเทียน ≥ 50% ของแท่ง และยาว ≥ 1 ATR) ทิ้ง Bullish FVG ไว้
+3. **Displacement:** แท่งเขียวแรง (ตัวเทียน ≥ 50% ของแท่ง และยาว ≥ 0.8 ATR) ทิ้ง Bullish FVG ไว้
 4. **CHoCH:** ราคาปิดเหนือ swing high ย่อยล่าสุด
 5. **Entry:** Limit ที่ขอบ FVG (หรือ 50% / Market), **SL** ใต้จุดต่ำสุดที่กวาด + buffer, **TP** = R:R
-6. ต้องครบภายใน **Setup window** (90 นาที) และถ้าราคาปิดหลุดทั้งโซน setup จะถูกยกเลิก
+6. ต้องครบภายใน **Setup window** (12 แท่งของกราฟ) และถ้าราคาปิดหลุดทั้งโซน setup จะถูกยกเลิก
 
 | ค่า | ค่าเริ่มต้น | ความหมาย |
 |---|---|---|
 | LTF entry | FVG edge | `FVG edge` / `FVG 50%` / `Market on confirm` |
 | Require liquidity sweep | เปิด | ต้องกวาด swing ย่อยก่อน CHoCH |
 | Internal swing length | 2 | ความไวของ swing ย่อยที่ใช้หา sweep และ CHoCH |
-| Displacement | body ≥ 0.5 × range, range ≥ 1.0 ATR | ความแรงของแท่งที่สร้าง FVG |
-| Setup window | 90 นาที | เวลาสูงสุดจากแตะโซนจนเกิดสัญญาณ |
+| Displacement | body ≥ 0.5 × range, range ≥ 0.8 ATR | ความแรงของแท่งที่สร้าง FVG |
+| Setup window | 12 แท่ง | จำนวนแท่งสูงสุดจากแตะโซนจนเกิดสัญญาณ (กราฟ 5m = 1 ชั่วโมง) |
 
 ## Execution & costs (backtest)
 
@@ -119,7 +120,7 @@
 | Retest stop-loss at | Signal wick | (เฉพาะ Zone retest) ใต้ไส้เทียนต่ำสุดของแท่งสัญญาณและแท่งก่อนหน้า (BUY) หรือเลือก `Zone edge` แบบเดิม |
 | SL buffer | 2 × spread หรือ 0.15 ATR | ใช้ค่าที่มากกว่า, SELL บวก spread ให้อีก |
 | Skip if SL < x spread | 3 | SL แคบเกิน ต้นทุนกินกำไร |
-| Skip if SL > x ATR | 1.5 | SL กว้างเกินสำหรับการเทรดสั้น |
+| Skip if SL > x ATR | 3.0 | SL กว้างเกิน (เทียบ ATR ของกราฟ) |
 | Skip if close ran > x R | 0.5 | แท่งสัญญาณปิดไกลจากโซนเกินไป ไม่ไล่ราคา |
 | Time stop | 120 นาที | ปิดเทรดที่ค้างนานเกิน |
 | One position at a time | เปิด | ระหว่างมีออเดอร์ (รวม limit ที่รอ) จะข้ามสัญญาณใหม่ |
@@ -131,8 +132,8 @@
 
 | ค่า | ค่าเริ่มต้น | หมายเหตุ |
 |---|---|---|
-| London | 08:00–11:30 เวลาลอนดอน | ≈ 14:00–17:30 ไทย (ช่วง BST) / 15:00–18:30 (ช่วง GMT) |
-| New York | 08:00–11:30 เวลานิวยอร์ก | ≈ 19:00–22:30 ไทย (ช่วง EDT) / 20:00–23:30 (ช่วง EST) |
+| London | 07:00–12:00 เวลาลอนดอน | ≈ 13:00–18:00 ไทย (ช่วง BST) / 14:00–19:00 (ช่วง GMT) |
+| New York | 08:00–13:00 เวลานิวยอร์ก | ≈ 19:00–00:00 ไทย (ช่วง EDT) / 20:00–01:00 (ช่วง EST) |
 | Block rollover | 16:45–18:15 NY | spread ทองถ่างมาก |
 | Block US data window | 08:20–09:00 NY อังคาร–ศุกร์ | ช่วงประกาศข่าว 08:30 เช่น CPI, NFP |
 | News 1–3 | ปิด | ใส่เวลาข่าวแรงอื่น เช่น FOMC แล้วจะไม่เข้าเทรด 15 นาทีก่อนถึง 30 นาทีหลัง |
@@ -140,7 +141,7 @@
 
 ## ตาราง Backtest
 
-ค่าเริ่มต้นเป็นแบบ **Compact** (Trades, Win rate, Expectancy, Net, Profit factor, Max drawdown, Avg SL / hold) ปิด `Compact stats table` เพื่อดูทุกแถว
+ค่าเริ่มต้นเป็นแบบ **Compact** (Trades, Win rate, Expectancy, Net, Profit factor, Max drawdown, Avg SL / hold, Setups → trades + ตัวกรองที่ตัดมากที่สุด) ปิด `Compact stats table` เพื่อดูทุกแถว
 
 | แถว | ความหมาย |
 |---|---|
@@ -153,6 +154,7 @@
 | Avg SL / cost | ระยะ SL เฉลี่ยเป็นราคา / ต้นทุน spread + slippage เฉลี่ยเป็น R |
 | Avg hold | เวลาถือเฉลี่ย |
 | BUY / SELL | จำนวน · win rate · กำไรสุทธิ แยกฝั่ง |
-| Filtered: time / setup | จำนวนสัญญาณที่ถูกกรองทิ้งด้วยแต่ละเหตุผล |
+| Setups → trades | จำนวน setup ที่ครบเงื่อนไข → จำนวนที่ได้เข้าเทรดจริง และตัวกรองที่ตัดทิ้งมากที่สุด |
+| Filtered: time / setup / bias | จำนวนสัญญาณที่ถูกกรองทิ้งด้วยแต่ละเหตุผล |
 
 > ⚠️ อินดิเคเตอร์นี้เป็นเครื่องมือช่วยวิเคราะห์ ไม่ใช่คำแนะนำการลงทุน ผล backtest ในอดีตไม่รับประกันผลในอนาคต

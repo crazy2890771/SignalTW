@@ -19,6 +19,8 @@ const string G_TIME = "Session / news / volatility"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
+bool   autoHTF     = input.bool(true, "Auto HTF (by chart TF)", group = G_TF,
+     tooltip = "เลือก HTF ให้อัตโนมัติตาม TF ของกราฟ (ไม่ใช้ค่า HTF 1/2/3 ด้านล่าง)\n1m → 5m / 15m / 1H\n3m–5m → 15m / 1H / 4H\n15m → 1H / 4H / D\n1H → 4H / D / W")
 bool   useTF1      = input.bool(true, "HTF 1", inline = "tf1", group = G_TF)
 string tf1         = input.timeframe("15", "", inline = "tf1", group = G_TF)
 bool   useTF2      = input.bool(true, "HTF 2", inline = "tf2", group = G_TF)
@@ -61,8 +63,8 @@ color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_M
 
 bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
      tooltip = "BUY: ราคาย่อลงแตะโซน Bullish (OB/FVG) แล้วปิดแท่งเขียวกลับขึ้นเหนือโซน\nSELL: ราคาเด้งขึ้นแตะโซน Bearish แล้วปิดแท่งแดงกลับลงใต้โซน\nแต่ละโซนให้สัญญาณได้ครั้งเดียว")
-string sigPreset   = input.string("Medium", "Signal frequency", options = ["Low", "Medium", "High", "Custom"], group = G_SIG,
-     tooltip = "Low = น้อยแต่คัดมาก (โซน HTF, ตามเทรนด์ HTF, Premium/Discount, รอ 120 นาที)\nMedium = สมดุล (โซน HTF + OB ของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH ของ HTF ที่ต่ำกว่า, Premium/Discount, รอ 60 นาที)\nHigh = สัญญาณมาก (ทุกโซน, ไม่ใช้ Premium/Discount, รอ 30 นาที)\nCustom = ใช้ค่าด้านล่างทั้งหมด")
+string sigPreset   = input.string("Scalp", "Signal frequency", options = ["Scalp", "High", "Medium", "Low", "Custom"], group = G_SIG,
+     tooltip = "Scalp = หลายสัญญาณต่อวัน สำหรับกราฟ 1m–5m (ทุกโซนรวมโซนของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH, ไม่ใช้ Premium/Discount, รอ 15 นาที)\nLow = น้อยแต่คัดมาก (โซน HTF, ตามเทรนด์ HTF, Premium/Discount, รอ 120 นาที)\nMedium = สมดุล (โซน HTF + OB ของกราฟ, ตามเทรนด์ HTF หรือกลับตัวด้วย CHoCH ของ HTF ที่ต่ำกว่า, Premium/Discount, รอ 60 นาที)\nHigh = สัญญาณมาก (ทุกโซน, ไม่ใช้ Premium/Discount, รอ 30 นาที)\nCustom = ใช้ค่าด้านล่างทั้งหมด")
 string sigFilter   = input.string("HTF trend or CHoCH", "Trend filter (Custom)", options = ["HTF trend or CHoCH", "HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
      tooltip = "HTF trend or CHoCH = BUY เมื่อเทรนด์ HTF สูงสุดเป็นขาขึ้น หรือ HTF ที่ต่ำที่สุด (เช่น 1H) เกิด CHoCH กลับเป็นขาขึ้นแล้ว (SELL กลับกัน) ถ้าเปิด HTF ไว้ตัวเดียวจะใช้ CHoCH ของ TF กราฟ\nHTF trend = ตามเทรนด์ HTF ที่สูงที่สุดที่เปิดอยู่เท่านั้น\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
 string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
@@ -96,10 +98,10 @@ bool   needSweep   = input.bool(true, "Require liquidity sweep", group = G_LTF,
 int    ltfLen      = input.int(2, "Internal swing length", minval = 1, maxval = 10, group = G_LTF,
      tooltip = "จำนวนแท่งซ้าย/ขวาสำหรับ swing ย่อยของกราฟ ที่ใช้หา sweep และ CHoCH (ค่าน้อย = ไวขึ้น)")
 float  dispBody    = input.float(0.5, "Displacement: body ≥ x range", minval = 0, maxval = 1, step = 0.05, inline = "disp", group = G_LTF)
-float  dispAtr     = input.float(1.0, "and range ≥ x ATR", minval = 0, step = 0.1, inline = "disp", group = G_LTF,
+float  dispAtr     = input.float(0.8, "and range ≥ x ATR", minval = 0, step = 0.1, inline = "disp", group = G_LTF,
      tooltip = "แท่งกลางของ FVG ต้องเป็นแท่งแรง: ตัวเทียน ≥ x ของความยาวแท่ง และความยาวแท่ง ≥ x × ATR14")
-int    armMin      = input.int(90, "Setup window (minutes)", minval = 5, step = 15, group = G_LTF,
-     tooltip = "หลังราคาแตะโซน HTF ต้องเกิด sweep + CHoCH + FVG ภายในเวลานี้ ไม่งั้นยกเลิก setup")
+int    armBars     = input.int(12, "Setup window (bars)", minval = 3, maxval = 100, group = G_LTF,
+     tooltip = "หลังราคาแตะโซน ต้องเกิด sweep + CHoCH + FVG ภายในจำนวนแท่งนี้ของกราฟ ไม่งั้นยกเลิก setup (กราฟ 5m: 12 แท่ง = 1 ชั่วโมง)")
 
 float  spreadPx    = input.float(0.30, "Spread", minval = 0, step = 0.05, inline = "cost", group = G_EXEC)
 float  slipPx      = input.float(0.10, "Slippage", minval = 0, step = 0.05, inline = "cost", group = G_EXEC,
@@ -115,7 +117,7 @@ float  bufAtr      = input.float(0.15, "or x ATR", minval = 0, step = 0.05, inli
      tooltip = "ระยะเผื่อของ SL = ค่าที่มากกว่าระหว่าง (x × spread) กับ (x × ATR14 ของกราฟ)")
 float  minSlSpread = input.float(3.0, "Skip if SL < x spread", minval = 0, step = 0.5, group = G_EXEC,
      tooltip = "ไม่เข้าเทรดถ้า SL แคบเกินไปเทียบ spread เพราะต้นทุนจะกินกำไรเกือบหมด")
-float  maxSlAtr    = input.float(1.5, "Skip if SL > x ATR", minval = 0, step = 0.25, group = G_EXEC,
+float  maxSlAtr    = input.float(3.0, "Skip if SL > x ATR", minval = 0, step = 0.25, group = G_EXEC,
      tooltip = "ไม่เข้าเทรดถ้า SL กว้างเกิน x × ATR14 ของกราฟ (0 = ไม่จำกัด) กันเทรดที่ความเสี่ยงใหญ่เกินสำหรับการเทรดสั้น")
 float  maxChase    = input.float(0.5, "Skip if close ran > x R from zone", minval = 0, step = 0.1, group = G_EXEC,
      tooltip = "เฉพาะ Market entry: ถ้าแท่งสัญญาณปิดห่างจากขอบโซนเกิน x เท่าของ Risk แปลว่าราคาวิ่งไปแล้ว ไม่ไล่ราคา (0 = ปิด)")
@@ -127,11 +129,11 @@ bool   showSkipped = input.bool(false, "Show filtered signals (×)", group = G_E
      tooltip = "แสดงเครื่องหมาย × ตรงสัญญาณที่ถูกกรองทิ้ง เอาเมาส์ชี้เพื่อดูเหตุผล")
 
 bool   useSess     = input.bool(true, "Trade only in sessions", group = G_TIME,
-     tooltip = "ใช้กับกราฟ TF ไม่เกิน 1H เวลาอ้างอิงตามเมืองนั้น ๆ (ปรับ Daylight Saving อัตโนมัติ)\nค่าเริ่มต้น: London 08:00–11:30 และ New York 08:00–11:30 (ประมาณ 14:00–17:30 และ 19:00–22:30 เวลาไทยช่วงหน้าร้อนของฝั่งนั้น)")
+     tooltip = "ใช้กับกราฟ TF ไม่เกิน 1H เวลาอ้างอิงตามเมืองนั้น ๆ (ปรับ Daylight Saving อัตโนมัติ)\nค่าเริ่มต้น: London 07:00–12:00 และ New York 08:00–13:00 (ประมาณ 13:00–18:00 และ 19:00–00:00 เวลาไทยช่วงหน้าร้อนของฝั่งนั้น)")
 bool   useLon      = input.bool(true, "London", inline = "lon", group = G_TIME)
-string sessLon     = input.session("0800-1130", "", inline = "lon", group = G_TIME)
+string sessLon     = input.session("0700-1200", "", inline = "lon", group = G_TIME)
 bool   useNY       = input.bool(true, "New York", inline = "ny", group = G_TIME)
-string sessNY      = input.session("0800-1130", "", inline = "ny", group = G_TIME)
+string sessNY      = input.session("0800-1300", "", inline = "ny", group = G_TIME)
 bool   blockRoll   = input.bool(true, "Block rollover (16:45–18:15 NY)", group = G_TIME,
      tooltip = "ช่วงเปลี่ยนวันของโบรกเกอร์ spread ทองถ่างมากและสภาพคล่องต่ำ")
 bool   blockData   = input.bool(true, "Block US data window", inline = "data", group = G_TIME)
@@ -156,13 +158,22 @@ bool   shadeSess   = input.bool(false, "Shade sessions / blocked times", group =
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 
+// Effective HTFs (auto by chart TF, or manual)
+int    chartS = timeframe.in_seconds(timeframe.period)
+string eTf1   = autoHTF ? (chartS <= 60 ? "5" : chartS <= 300 ? "15" : chartS <= 900 ? "60" : chartS <= 3600 ? "240" : "D") : tf1
+string eTf2   = autoHTF ? (chartS <= 60 ? "15" : chartS <= 300 ? "60" : chartS <= 900 ? "240" : chartS <= 3600 ? "D" : "W") : tf2
+string eTf3   = autoHTF ? (chartS <= 60 ? "60" : chartS <= 300 ? "240" : chartS <= 900 ? "D" : chartS <= 3600 ? "W" : "M") : tf3
+bool   eUse1  = autoHTF or useTF1
+bool   eUse2  = autoHTF or useTF2
+bool   eUse3  = autoHTF or useTF3
+
 // Effective signal settings (preset or custom)
 bool   isCustom = sigPreset == "Custom"
 string eFilter  = isCustom ? sigFilter   : sigPreset == "Low" ? "HTF trend" : "HTF trend or CHoCH"
 string eZoneTF  = isCustom ? sigZoneTF   : sigPreset == "Low" ? "HTF only" : sigPreset == "Medium" ? "HTF + chart OB" : "All TF"
-bool   eUsePD   = isCustom ? usePD       : sigPreset != "High"
+bool   eUsePD   = isCustom ? usePD       : sigPreset == "Low" or sigPreset == "Medium"
 float  eDepart  = isCustom ? sigDepart   : sigPreset == "Low" ? 1.0 : sigPreset == "Medium" ? 0.75 : 0.5
-int    eCool    = isCustom ? sigCooldown : sigPreset == "Low" ? 120 : sigPreset == "Medium" ? 60 : 30
+int    eCool    = isCustom ? sigCooldown : sigPreset == "Low" ? 120 : sigPreset == "Medium" ? 60 : sigPreset == "High" ? 30 : 15
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
 float  atrC    = ta.atr(14)
@@ -567,9 +578,9 @@ string chartTag = tfName(timeframe.period)
      ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4)
 
 // Higher timeframes
-[v1, t1, nBull1, nBear1] = htfSlot(tf1, useTF1, zH1, 1)
-[v2, t2, nBull2, nBear2] = htfSlot(tf2, useTF2, zH2, 2)
-[v3, t3, nBull3, nBear3] = htfSlot(tf3, useTF3, zH3, 3)
+[v1, t1, nBull1, nBear1] = htfSlot(eTf1, eUse1, zH1, 1)
+[v2, t2, nBull2, nBear2] = htfSlot(eTf2, eUse2, zH2, 2)
+[v3, t3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
 
 //==============================================================================
 // BUY / SELL SIGNALS
@@ -581,7 +592,7 @@ int   revTrend = nHTF >= 2 ? (v1 ? t1 : t2) : cTrend
 int   sigMinRank = eZoneTF != "All TF" and (v1 or v2 or v3) ? 1 : 0
 
 // Premium / Discount of the bias timeframe's recent range (confirmed bars only)
-string biasTF = v3 ? tf3 : v2 ? tf2 : v1 ? tf1 : timeframe.period
+string biasTF = v3 ? eTf3 : v2 ? eTf2 : v1 ? eTf1 : timeframe.period
 [pdHi, pdLo] = request.security(syminfo.tickerid, biasTF, [ta.highest(high, pdLen)[1], ta.lowest(low, pdLen)[1]], lookahead = barmerge.lookahead_on)
 float pdMid   = (pdHi + pdLo) / 2
 bool  pdBuy   = not eUsePD or na(pdMid) or close < pdMid
@@ -677,6 +688,11 @@ type Stats
     int   fSlMin    = 0
     int   fSlMax    = 0
     int   fChase    = 0
+    int   fTrend    = 0
+    int   fPD       = 0
+    int   fCool     = 0
+    int   setups    = 0
+    int   taken     = 0
 
 var array<Trade> trades = array.new<Trade>()
 var Stats        S      = Stats.new()
@@ -782,7 +798,7 @@ float sTouchBot = minNa(minNa(tsb0, tsb1), minNa(tsb2, tsb3))
 
 // Bullish setup state
 var bool  bArm    = false
-var int   bArmT   = na
+var int   bArmB   = na
 var float bArmTop = na
 var float bArmBot = na
 var float bSweep  = na     // lowest low since the zone was touched
@@ -792,7 +808,7 @@ var float bFvgT   = na
 var float bFvgB   = na
 // Bearish setup state
 var bool  sArm    = false
-var int   sArmT   = na
+var int   sArmB   = na
 var float sArmTop = na
 var float sArmBot = na
 var float sSweep  = na     // highest high since the zone was touched
@@ -805,15 +821,15 @@ bool ltfBuy  = false
 bool ltfSell = false
 if isLTF and showSig and barstate.isconfirmed
     // Expire / invalidate (setup window over, or price closed through the whole zone)
-    if bArm and (time - bArmT > armMin * 60000 or close < bArmBot)
+    if bArm and (bar_index - bArmB > armBars or close < bArmBot)
         bArm := false
-    if sArm and (time - sArmT > armMin * 60000 or close > sArmTop)
+    if sArm and (bar_index - sArmB > armBars or close > sArmTop)
         sArm := false
     // Arm on a zone touch, or widen the zone range while armed
     if bTouch
         if not bArm
             bArm    := true
-            bArmT   := time
+            bArmB   := bar_index
             bArmTop := bTouchTop
             bArmBot := bTouchBot
             bSweep  := low
@@ -827,7 +843,7 @@ if isLTF and showSig and barstate.isconfirmed
     if sTouch
         if not sArm
             sArm    := true
-            sArmT   := time
+            sArmB   := bar_index
             sArmTop := sTouchTop
             sArmBot := sTouchBot
             sSweep  := high
@@ -868,9 +884,19 @@ if isLTF and showSig and barstate.isconfirmed
     // A completed setup is consumed; it becomes a candidate only if bias / P-D / cooldown allow it
     if ltfBuy
         bArm   := false
+        S.setups := S.setups + 1
+        if not canBuy
+            S.fCool  := S.fCool + (coolOk ? 0 : 1)
+            S.fTrend := S.fTrend + (coolOk and not biasBuy ? 1 : 0)
+            S.fPD    := S.fPD + (coolOk and biasBuy and not pdBuy ? 1 : 0)
         ltfBuy := canBuy
     if ltfSell
         sArm    := false
+        S.setups := S.setups + 1
+        if not canSell
+            S.fCool  := S.fCool + (coolOk ? 0 : 1)
+            S.fTrend := S.fTrend + (coolOk and not biasSell ? 1 : 0)
+            S.fPD    := S.fPD + (coolOk and biasSell and not pdSell ? 1 : 0)
         ltfSell := canSell
 
 //==============================================================================
@@ -885,6 +911,7 @@ bool   cLim     = false
 string cInfo    = ""
 float  ltfBuf   = math.max(bufSpread * spreadPx, bufAtr * atrC)
 if not isLTF and (rawBuy or rawSell)
+    S.setups := S.setups + 1
     candBuy  := rawBuy
     candSell := rawSell
     markTouched(zC, rawBuy)
@@ -954,6 +981,7 @@ if candBuy or candSell
         buySig  := isBuy
         sellSig := not isBuy
         lastSig := time
+        S.taken := S.taken + 1
         label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, risk, cInfo)
         trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk))
         if showSLTP
@@ -1009,8 +1037,14 @@ rStr(float r) => (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + " R"
 sideStat(int n, int w, float r) =>
     n > 0 ? str.tostring(n) + " · " + str.tostring(100.0 * w / n, "#") + "% · " + rStr(r) : "-"
 
+topFilter(Stats s) =>
+    array<int>    v = array.from(s.fSess, s.fNews, s.fVol, s.fSlMin, s.fSlMax, s.fChase, s.fPos, s.fTrend, s.fPD, s.fCool)
+    array<string> k = array.from("session", "news", "volatility", "SL too small", "SL too wide", "chase", "in position", "trend", "P/D", "cooldown")
+    int best = int(v.max())
+    best > 0 ? k.get(v.indexof(best)) + " " + str.tostring(best) : "-"
+
 if showStats and showSig and barstate.islast
-    var table st = table.new(posOf(statsPos), 2, statsCompact ? 8 : 15, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table st = table.new(posOf(statsPos), 2, statsCompact ? 10 : 18, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
     int   closed = S.tp + S.sl + S.tm
     int   wins   = S.bW + S.sW
@@ -1030,15 +1064,20 @@ if showStats and showSig and barstate.islast
     statRow(st, 5, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
     statRow(st, 6, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
     statRow(st, 7, "Avg SL / hold", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
+    statRow(st, 8, "Setups → trades", str.tostring(S.setups) + " → " + str.tostring(S.taken) + " (top filter: " + topFilter(S) + ")", fg)
+    if isLTF and chartSec > 900
+        st.cell(0, 9, "⚠ LTF model needs a 1m–5m chart (now " + chartTag + ")", text_color = bad, text_size = size.small)
+        st.merge_cells(0, 9, 1, 9)
     if not statsCompact
-        statRow(st, 8, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
-        statRow(st, 9, "Max losing streak", str.tostring(S.maxStreak), fg)
-        statRow(st, 10, "Avg cost", closed > 0 ? str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
-        statRow(st, 11, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
-        statRow(st, 12, "SELL (n · win · net)", sideStat(S.sN, S.sW, S.sR), fg)
-        statRow(st, 13, "Filtered: time", "session " + str.tostring(S.fSess) + " · news " + str.tostring(S.fNews) + " · vol " + str.tostring(S.fVol), fg)
-        statRow(st, 14, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
+        statRow(st, 10, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
+        statRow(st, 11, "Max losing streak", str.tostring(S.maxStreak), fg)
+        statRow(st, 12, "Avg cost", closed > 0 ? str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
+        statRow(st, 13, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
+        statRow(st, 14, "SELL (n · win · net)", sideStat(S.sN, S.sW, S.sR), fg)
+        statRow(st, 15, "Filtered: time", "session " + str.tostring(S.fSess) + " · news " + str.tostring(S.fNews) + " · vol " + str.tostring(S.fVol), fg)
+        statRow(st, 16, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
              " · in pos " + str.tostring(S.fPos) + " · unfilled " + str.tostring(S.miss), fg)
+        statRow(st, 17, "Filtered: bias", "trend " + str.tostring(S.fTrend) + " · P/D " + str.tostring(S.fPD) + " · cooldown " + str.tostring(S.fCool), fg)
 
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
@@ -1058,10 +1097,10 @@ if showDash and barstate.islast
     trendCell(tb, row, chartTag + " (chart)", cTrend)
     if v1
         row += 1
-        trendCell(tb, row, tfName(tf1), t1)
+        trendCell(tb, row, tfName(eTf1), t1)
     if v2
         row += 1
-        trendCell(tb, row, tfName(tf2), t2)
+        trendCell(tb, row, tfName(eTf2), t2)
     if v3
         row += 1
-        trendCell(tb, row, tfName(tf3), t3)
+        trendCell(tb, row, tfName(eTf3), t3)
