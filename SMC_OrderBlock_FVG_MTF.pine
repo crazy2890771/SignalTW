@@ -77,6 +77,10 @@ float  rrRatio     = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = 
 color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
 color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
 
+bool   showStats   = input.bool(true, "Show backtest stats", inline = "bt", group = G_SIG,
+     tooltip = "ทดสอบย้อนหลังทุกสัญญาณบนข้อมูลที่โหลดในกราฟ: ชนะเมื่อโดน TP ก่อน, แพ้เมื่อโดน SL ก่อน (ถ้าแท่งเดียวโดนทั้งคู่ นับเป็นแพ้)")
+string statsPos    = input.string("Bottom Left", "", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], inline = "bt", group = G_SIG)
+
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 
 // Effective signal settings (preset or custom)
@@ -495,10 +499,45 @@ drawSignal(bool isBuy, float zoneEdge) =>
     float tp    = entry + (entry - sl) * rrRatio
     color c     = isBuy ? buyCol : sellCol
     string tip  = (isBuy ? "BUY" : "SELL") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(rrRatio) + ")"
-    label.new(bar_index, close, isBuy ? "BUY" : "SELL", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
+    label lb = label.new(bar_index, close, isBuy ? "BUY" : "SELL", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
          textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
     alert(syminfo.ticker + " " + (isBuy ? "BUY" : "SELL") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
-    [entry, sl, tp]
+    [entry, sl, tp, lb]
+
+//==============================================================================
+// BACKTEST (every signal: TP first = win, SL first = loss)
+//==============================================================================
+type Trade
+    label lb
+    bool  isBuy
+    float entry
+    float sl
+    float tp
+
+var array<Trade> openTrades = array.new<Trade>()
+var int   buyWin   = 0
+var int   buyLoss  = 0
+var int   sellWin  = 0
+var int   sellLoss = 0
+
+// Resolve open trades on this bar (before new signals are added, so the entry bar is never counted)
+if barstate.isconfirmed and openTrades.size() > 0
+    for i = openTrades.size() - 1 to 0
+        Trade tr = openTrades.get(i)
+        bool hitSL = tr.isBuy ? low <= tr.sl : high >= tr.sl
+        bool hitTP = tr.isBuy ? high >= tr.tp : low <= tr.tp
+        if hitSL or hitTP
+            bool win = hitTP and not hitSL     // both on one bar -> counted as loss (conservative)
+            if tr.isBuy
+                buyWin  += win ? 1 : 0
+                buyLoss += win ? 0 : 1
+            else
+                sellWin  += win ? 1 : 0
+                sellLoss += win ? 0 : 1
+            tr.lb.set_text((tr.isBuy ? "BUY" : "SELL") + (win ? " ✔" : " ✘"))
+            if not win
+                tr.lb.set_color(color.gray)
+            openTrades.remove(i)
 
 if buySig or sellSig
     lastSig := time
@@ -508,7 +547,8 @@ if buySig or sellSig
     markTouched(zH2, buySig)
     markTouched(zH3, buySig)
     float edge = buySig ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
-    [en, sl, tp] = drawSignal(buySig, edge)
+    [en, sl, tp, lb] = drawSignal(buySig, edge)
+    openTrades.push(Trade.new(lb, buySig, en, sl, tp))
     if showSLTP
         line.delete(slLine)
         line.delete(tpLine)
@@ -547,6 +587,38 @@ alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish stru
 //==============================================================================
 // DASHBOARD
 //==============================================================================
+posOf(string s) =>
+    s == "Top Right" ? position.top_right : s == "Bottom Right" ? position.bottom_right : s == "Top Left" ? position.top_left : position.bottom_left
+
+statRow(table t, int row, string k, string v, color c) =>
+    t.cell(0, row, k, text_color = chart.fg_color, text_size = size.small, text_halign = text.align_left)
+    t.cell(1, row, v, text_color = c, text_size = size.small, text_halign = text.align_right)
+
+if showStats and showSig and barstate.islast
+    var table st = table.new(posOf(statsPos), 2, 9, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+         border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
+    int   w     = buyWin + sellWin
+    int   l     = buyLoss + sellLoss
+    int   done  = w + l
+    float wr    = done > 0 ? 100.0 * w / done : na
+    float netR  = w * rrRatio - l
+    float pf    = l > 0 ? w * rrRatio / l : na
+    float beWR  = 100.0 / (1 + rrRatio)
+    string bWR  = buyWin + buyLoss > 0 ? str.tostring(100.0 * buyWin / (buyWin + buyLoss), "#.#") + "%" : "-"
+    string sWR  = sellWin + sellLoss > 0 ? str.tostring(100.0 * sellWin / (sellWin + sellLoss), "#.#") + "%" : "-"
+    color  good = msBullCol
+    color  bad  = msBearCol
+    st.cell(0, 0, "Backtest (R:R 1:" + str.tostring(rrRatio) + ")", text_color = chart.fg_color, text_size = size.small)
+    st.merge_cells(0, 0, 1, 0)
+    statRow(st, 1, "Trades (closed / open)", str.tostring(done) + " / " + str.tostring(openTrades.size()), chart.fg_color)
+    statRow(st, 2, "Win / Loss", str.tostring(w) + " / " + str.tostring(l), chart.fg_color)
+    statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", na(wr) ? chart.fg_color : wr >= beWR ? good : bad)
+    statRow(st, 4, "Break-even win rate", str.tostring(beWR, "#.#") + "%", chart.fg_color)
+    statRow(st, 5, "BUY win rate", bWR + " (" + str.tostring(buyWin + buyLoss) + ")", chart.fg_color)
+    statRow(st, 6, "SELL win rate", sWR + " (" + str.tostring(sellWin + sellLoss) + ")", chart.fg_color)
+    statRow(st, 7, "Net result", (netR >= 0 ? "+" : "") + str.tostring(netR, "#.#") + " R", netR >= 0 ? good : bad)
+    statRow(st, 8, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? chart.fg_color : pf >= 1 ? good : bad)
+
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
     color  c   = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray
