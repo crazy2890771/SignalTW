@@ -8,6 +8,7 @@ indicator("SignalTW - Order Block & FVG [MTF]", "SignalTW OB/FVG", overlay = tru
 // INPUTS
 //==============================================================================
 const string G_TF   = "Timeframes (ดูได้ทุก TF)"
+const string G_DISP = "Display (ลดความรก)"
 const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
@@ -23,40 +24,56 @@ string tf3         = input.timeframe("D", "", inline = "tf3", group = G_TF)
 int    swingLen    = input.int(5, "Swing length", minval = 2, maxval = 50, group = G_TF,
      tooltip = "จำนวนแท่งซ้าย/ขวาที่ใช้หา Swing High/Low สำหรับ Market Structure และ Order Block")
 
+bool   nearestOnly = input.bool(true, "Show only nearest zones", inline = "near", group = G_DISP)
+int    nearestN    = input.int(3, "", minval = 1, maxval = 20, inline = "near", group = G_DISP,
+     tooltip = "แสดงเฉพาะโซนที่ใกล้ราคาปัจจุบันที่สุด N โซน ต่อฝั่ง (แยก OB / FVG) จากทุก TF รวมกัน")
+bool   mergeTF     = input.bool(true, "Hide lower-TF zones inside higher-TF zones", group = G_DISP,
+     tooltip = "ถ้าโซนของ TF เล็กซ้อนกับโซนประเภทเดียวกันของ TF ใหญ่ จะแสดงเฉพาะโซน TF ใหญ่ และเพิ่มชื่อ TF ในป้าย เช่น OB 4H+1H (Confluence)")
+bool   hideMit     = input.bool(true, "Hide mitigated zones", group = G_DISP,
+     tooltip = "ซ่อนโซนที่ราคาเข้าไปใช้แล้ว (ถ้าปิด จะหยุดยืดโซนและทำให้จางลงแทน)")
+string lblSizeOpt  = input.string("Tiny", "Label size", options = ["Tiny", "Small", "Normal"], group = G_DISP)
+
 bool   showOB      = input.bool(true, "Show Order Blocks", group = G_OB)
-int    maxOB       = input.int(5, "Max OB per TF / side", minval = 1, maxval = 50, group = G_OB)
+int    maxOB       = input.int(5, "Max OB stored per TF / side", minval = 1, maxval = 50, group = G_OB)
 string obMitMode   = input.string("Close", "OB mitigation", options = ["Close", "Wick"], group = G_OB,
      tooltip = "Close = ปิดแท่งทะลุโซนถือว่าใช้แล้ว, Wick = ไส้เทียนแตะขอบไกลสุดของโซน")
+float  obMaxAtr    = input.float(1.5, "Max OB height (x ATR)", minval = 0, step = 0.1, inline = "obh", group = G_OB,
+     tooltip = "จำกัดความหนาของ OB เทียบกับ ATR(14) ของ TF นั้น (0 = ไม่จำกัด)\nTrim = ตัดให้เหลือเฉพาะส่วนที่ใกล้ราคา, Skip = ไม่แสดง OB ที่หนาเกิน")
+string obSizeMode  = input.string("Trim", "", options = ["Trim", "Skip"], inline = "obh", group = G_OB)
 color  bullOBCol   = input.color(color.new(#089981, 80), "Bullish OB", inline = "obc", group = G_OB)
 color  bearOBCol   = input.color(color.new(#f23645, 80), "Bearish OB", inline = "obc", group = G_OB)
 
 bool   showFVG     = input.bool(true, "Show Fair Value Gaps", group = G_FVG)
-int    maxFVG      = input.int(5, "Max FVG per TF / side", minval = 1, maxval = 50, group = G_FVG)
+int    maxFVG      = input.int(5, "Max FVG stored per TF / side", minval = 1, maxval = 50, group = G_FVG)
 float  fvgMinPct   = input.float(0.0, "Min gap size (%)", minval = 0, step = 0.01, group = G_FVG,
      tooltip = "กรอง FVG ที่เล็กกว่าเปอร์เซ็นต์นี้ของราคา (0 = แสดงทั้งหมด)")
 color  bullFVGCol  = input.color(color.new(#2962ff, 80), "Bullish FVG", inline = "fvgc", group = G_FVG)
 color  bearFVGCol  = input.color(color.new(#ff9800, 80), "Bearish FVG", inline = "fvgc", group = G_FVG)
 
-bool   hideMit     = input.bool(true, "Hide mitigated zones", group = G_OB,
-     tooltip = "ซ่อนโซนที่ราคาเข้าไปใช้แล้ว (ถ้าปิด จะหยุดยืดโซนและทำให้จางลงแทน)")
-
-bool   showMS      = input.bool(true, "Show BOS / CHoCH (chart TF)", group = G_MS)
+string msMode      = input.string("CHoCH only", "BOS / CHoCH (chart TF)", options = ["All", "CHoCH only", "None"], group = G_MS)
 color  msBullCol   = input.color(#089981, "Bullish", inline = "msc", group = G_MS)
 color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_MS)
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
+string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
+
 //==============================================================================
 // TYPES
 //==============================================================================
 type Zone
-    box   bx
-    float top
-    float bot
-    bool  bull
-    bool  isOB
-    bool  mitigated = false
+    box    bx
+    float  top
+    float  bot
+    int    left
+    bool   bull
+    bool   isOB
+    color  col
+    int    rank        // 0 = chart TF, 1..3 = HTF slot (higher = more important)
+    string tag         // timeframe name, e.g. "4H"
+    string lbl         // base label text, e.g. "OB 4H"
+    bool   mitigated = false
 
 //==============================================================================
 // DETECTION (runs on any timeframe, also inside request.security)
@@ -75,8 +92,10 @@ detect(int len, float minPct) =>
     var bool  swLUsed  = true
     var int   trend    = 0
 
-    float ph = ta.pivothigh(high, len, len)
-    float pl = ta.pivotlow(low, len, len)
+    float atr = ta.atr(14)
+    float cap = obMaxAtr * atr
+    float ph  = ta.pivothigh(high, len, len)
+    float pl  = ta.pivotlow(low, len, len)
     if not na(ph)
         swH     := ph
         swHBar  := bar_index - len
@@ -118,6 +137,12 @@ detect(int len, float minPct) =>
         bullOBT := high[idx]
         bullOBB := low[idx]
         bullOBX := time[idx]
+        // Oversized OB: keep the upper part (closest to price) or skip it
+        if obMaxAtr > 0 and bullOBT - bullOBB > cap
+            if obSizeMode == "Skip"
+                bullOB := false
+            else
+                bullOBB := bullOBT - cap
 
     // Bearish break of structure -> Order Block = candle with highest high of the leg
     if not swLUsed and close < swL
@@ -137,6 +162,12 @@ detect(int len, float minPct) =>
         bearOBT := high[idx]
         bearOBB := low[idx]
         bearOBX := time[idx]
+        // Oversized OB: keep the lower part (closest to price) or skip it
+        if obMaxAtr > 0 and bearOBT - bearOBB > cap
+            if obSizeMode == "Skip"
+                bearOB := false
+            else
+                bearOBT := bearOBB + cap
 
     // Fair Value Gaps (3-candle imbalance)
     bool bullFVG = low > high[2] and close[1] > high[2] and (low - high[2]) / close * 100 >= minPct
@@ -164,17 +195,46 @@ tfName(simple string tf) =>
      s >= 3600 and s % 3600 == 0      ? str.tostring(math.round(s / 3600)) + "H" :
      s >= 60                          ? str.tostring(math.round(s / 60)) + "m" : str.tostring(s) + "s"
 
-addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, string lbl, color c, bool htf, int maxN) =>
-    box bx = box.new(t, top, time, bot, xloc = xloc.bar_time, extend = extend.right,
-         border_color = color.new(c, 30), border_style = htf ? line.style_dashed : line.style_solid,
-         bgcolor = c, text = lbl, text_size = size.small, text_color = color.new(c, 0),
-         text_halign = text.align_right, text_valign = text.align_center)
-    zs.unshift(Zone.new(bx, top, bot, bull, isOB))
-    if zs.size() > maxN
-        Zone old = zs.pop()
-        old.bx.delete()
+sameKind(Zone a, bool bull, bool isOB) => a.bull == bull and a.isOB == isOB
 
-// Returns [bullTouch, bearTouch] for zones price is currently trading inside
+addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color c, int rank, string tag, int maxN) =>
+    float nTop  = top
+    float nBot  = bot
+    int   nLeft = t
+    // Overlapping active zone of the same kind on the same TF:
+    // FVGs are merged into one zone, an older OB is replaced by the newer one
+    int n = zs.size()
+    if n > 0
+        for i = n - 1 to 0
+            Zone z = zs.get(i)
+            if not z.mitigated and sameKind(z, bull, isOB) and z.top >= bot and z.bot <= top
+                if not isOB
+                    nTop  := math.max(nTop, z.top)
+                    nBot  := math.min(nBot, z.bot)
+                    nLeft := math.min(nLeft, z.left)
+                z.bx.delete()
+                zs.remove(i)
+    string lbl = (isOB ? "OB" : "FVG") + (rank > 0 ? " " + tag : "")
+    box bx = box.new(nLeft, nTop, time, nBot, xloc = xloc.bar_time, extend = extend.right,
+         border_color = color.new(c, 30), border_style = rank > 0 ? line.style_dashed : line.style_solid,
+         bgcolor = c, text = lbl, text_size = lblSize, text_color = color.new(c, 0),
+         text_halign = text.align_right, text_valign = rank > 0 ? text.align_top : text.align_bottom)
+    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl))
+    // Keep at most maxN zones of this kind (newest first)
+    array<int> drop = array.new<int>()
+    int cnt = 0
+    for i = 0 to zs.size() - 1
+        if sameKind(zs.get(i), bull, isOB)
+            cnt += 1
+            if cnt > maxN
+                drop.push(i)
+    int d = drop.size()
+    if d > 0
+        for j = d - 1 to 0
+            Zone old = zs.remove(drop.get(j))
+            old.bx.delete()
+
+// Mitigation check. Returns [bullTouch, bearTouch] for zones price is currently trading inside
 updateZones(array<Zone> zs) =>
     bool bullTouch = false
     bool bearTouch = false
@@ -207,59 +267,100 @@ updateZones(array<Zone> zs) =>
 fmt(float p) => str.tostring(p, format.mintick)
 
 // Creates zones for one timeframe, returns [newBullOB, newBearOB, newBullFVG, newBearFVG]
-handleSignals(bool isNew, string tag, bool htf, array<Zone> bOB, array<Zone> sOB, array<Zone> bF, array<Zone> sF,
+handleSignals(bool isNew, int rank, string tag, array<Zone> zs,
      bool a1, float a2, float a3, int a4, bool b1, float b2, float b3, int b4,
      bool c1, float c2, float c3, int c4, bool d1, float d2, float d3, int d4) =>
-    string sfx = tag == "" ? "" : " " + tag
+    string sfx = " " + tag
     bool nbOB = isNew and showOB and a1
     bool nsOB = isNew and showOB and b1
     bool nbF  = isNew and showFVG and c1
     bool nsF  = isNew and showFVG and d1
     if nbOB
-        addZone(bOB, a2, a3, a4, true, true, "OB" + sfx, bullOBCol, htf, maxOB)
+        addZone(zs, a2, a3, a4, true, true, bullOBCol, rank, tag, maxOB)
         alert(syminfo.ticker + " Bullish OB" + sfx + " : " + fmt(a3) + " - " + fmt(a2), alert.freq_once_per_bar)
     if nsOB
-        addZone(sOB, b2, b3, b4, false, true, "OB" + sfx, bearOBCol, htf, maxOB)
+        addZone(zs, b2, b3, b4, false, true, bearOBCol, rank, tag, maxOB)
         alert(syminfo.ticker + " Bearish OB" + sfx + " : " + fmt(b3) + " - " + fmt(b2), alert.freq_once_per_bar)
     if nbF
-        addZone(bF, c2, c3, c4, true, false, "FVG" + sfx, bullFVGCol, htf, maxFVG)
+        addZone(zs, c2, c3, c4, true, false, bullFVGCol, rank, tag, maxFVG)
         alert(syminfo.ticker + " Bullish FVG" + sfx + " : " + fmt(c3) + " - " + fmt(c2), alert.freq_once_per_bar)
     if nsF
-        addZone(sF, d2, d3, d4, false, false, "FVG" + sfx, bearFVGCol, htf, maxFVG)
+        addZone(zs, d2, d3, d4, false, false, bearFVGCol, rank, tag, maxFVG)
         alert(syminfo.ticker + " Bearish FVG" + sfx + " : " + fmt(d3) + " - " + fmt(d2), alert.freq_once_per_bar)
     [nbOB, nsOB, nbF, nsF]
 
 // Higher-timeframe slot (non-repainting: only confirmed HTF bars are used)
 var int chartSec = timeframe.in_seconds(timeframe.period)
 
-htfSlot(simple string tf, bool use, array<Zone> bOB, array<Zone> sOB, array<Zone> bF, array<Zone> sF) =>
+htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
     [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] =
          request.security(syminfo.tickerid, tf, detectConfirmed(swingLen, fvgMinPct), lookahead = barmerge.lookahead_on)
     bool valid = use and timeframe.in_seconds(tf) > chartSec
     bool isNew = valid and timeframe.change(tf)
-    [nb, ns, nbf, nsf] = handleSignals(isNew, tfName(tf), true, bOB, sOB, bF, sF,
+    [nb, ns, nbf, nsf] = handleSignals(isNew, rank, tfName(tf), zs,
          a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4)
     [valid, t, nb or nbf, ns or nsf]
 
 //==============================================================================
 // STATE
 //==============================================================================
-var array<Zone> cBOB = array.new<Zone>()
-var array<Zone> cSOB = array.new<Zone>()
-var array<Zone> cBF = array.new<Zone>()
-var array<Zone> cSF = array.new<Zone>()
-var array<Zone> h1BOB = array.new<Zone>()
-var array<Zone> h1SOB = array.new<Zone>()
-var array<Zone> h1BF = array.new<Zone>()
-var array<Zone> h1SF = array.new<Zone>()
-var array<Zone> h2BOB = array.new<Zone>()
-var array<Zone> h2SOB = array.new<Zone>()
-var array<Zone> h2BF = array.new<Zone>()
-var array<Zone> h2SF = array.new<Zone>()
-var array<Zone> h3BOB = array.new<Zone>()
-var array<Zone> h3SOB = array.new<Zone>()
-var array<Zone> h3BF = array.new<Zone>()
-var array<Zone> h3SF = array.new<Zone>()
+var array<Zone> zC  = array.new<Zone>()
+var array<Zone> zH1 = array.new<Zone>()
+var array<Zone> zH2 = array.new<Zone>()
+var array<Zone> zH3 = array.new<Zone>()
+
+//==============================================================================
+// DISPLAY FILTER (nearest zones + higher-TF priority)
+//==============================================================================
+collect(array<Zone> src, array<Zone> dst) =>
+    for z in src
+        if not z.mitigated
+            dst.push(z)
+
+setVisible(Zone z, bool vis, string extra) =>
+    z.bx.set_bgcolor(vis ? z.col : color(na))
+    z.bx.set_border_color(vis ? color.new(z.col, 30) : color(na))
+    z.bx.set_text_color(vis ? color.new(z.col, 0) : color(na))
+    z.bx.set_text(z.lbl + extra)
+
+refreshDisplay() =>
+    array<Zone> pool = array.new<Zone>()
+    collect(zC, pool)
+    collect(zH1, pool)
+    collect(zH2, pool)
+    collect(zH3, pool)
+    int n = pool.size()
+    if n > 0
+        array<bool>   hid   = array.new<bool>(n, false)
+        array<string> extra = array.new<string>(n, "")
+        // Lower-TF zone inside a higher-TF zone of the same kind -> show only the higher one (confluence label)
+        if mergeTF
+            for i = 0 to n - 1
+                Zone a = pool.get(i)
+                for j = 0 to n - 1
+                    Zone b = pool.get(j)
+                    if b.rank > a.rank and sameKind(b, a.bull, a.isOB) and b.top >= a.bot and b.bot <= a.top
+                        hid.set(i, true)
+                        if not str.contains(extra.get(j) + "+", "+" + a.tag + "+")
+                            extra.set(j, extra.get(j) + "+" + a.tag)
+                        break
+        // Nearest N per side and type
+        array<float> dist = array.new<float>(n, 0.0)
+        for i = 0 to n - 1
+            Zone z = pool.get(i)
+            dist.set(i, z.bull ? math.max(0.0, close - z.top) : math.max(0.0, z.bot - close))
+        array<int> ord = dist.sort_indices(order.ascending)
+        array<int> cnt = array.new<int>(4, 0)
+        for i in ord
+            Zone z = pool.get(i)
+            bool vis = not hid.get(i)
+            if vis and nearestOnly
+                int k = (z.isOB ? 0 : 2) + (z.bull ? 0 : 1)
+                if cnt.get(k) >= nearestN
+                    vis := false
+                else
+                    cnt.set(k, cnt.get(k) + 1)
+            setVisible(z, vis, extra.get(i))
 
 //==============================================================================
 // MAIN
@@ -268,42 +369,35 @@ var array<Zone> h3SF = array.new<Zone>()
 bool bullTouch = false
 bool bearTouch = false
 if barstate.isconfirmed
-    [bt0, st0] = updateZones(cBOB)
-    [bt1, st1] = updateZones(cSOB)
-    [bt2, st2] = updateZones(cBF)
-    [bt3, st3] = updateZones(cSF)
-    [bt4, st4] = updateZones(h1BOB)
-    [bt5, st5] = updateZones(h1SOB)
-    [bt6, st6] = updateZones(h1BF)
-    [bt7, st7] = updateZones(h1SF)
-    [bt8, st8] = updateZones(h2BOB)
-    [bt9, st9] = updateZones(h2SOB)
-    [bt10, st10] = updateZones(h2BF)
-    [bt11, st11] = updateZones(h2SF)
-    [bt12, st12] = updateZones(h3BOB)
-    [bt13, st13] = updateZones(h3SOB)
-    [bt14, st14] = updateZones(h3BF)
-    [bt15, st15] = updateZones(h3SF)
-    bullTouch := bt0 or bt1 or bt2 or bt3 or bt4 or bt5 or bt6 or bt7 or bt8 or bt9 or bt10 or bt11 or bt12 or bt13 or bt14 or bt15
-    bearTouch := st0 or st1 or st2 or st3 or st4 or st5 or st6 or st7 or st8 or st9 or st10 or st11 or st12 or st13 or st14 or st15
+    [bt0, st0] = updateZones(zC)
+    [bt1, st1] = updateZones(zH1)
+    [bt2, st2] = updateZones(zH2)
+    [bt3, st3] = updateZones(zH3)
+    bullTouch := bt0 or bt1 or bt2 or bt3
+    bearTouch := st0 or st1 or st2 or st3
 
 // Chart timeframe
+string chartTag = tfName(timeframe.period)
 [ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, cms, cmsLvl, cmsX, cTrend] = detect(swingLen, fvgMinPct)
-[cnb, cns, cnbf, cnsf] = handleSignals(showChartTF and barstate.isconfirmed, "", false, cBOB, cSOB, cBF, cSF,
+[cnb, cns, cnbf, cnsf] = handleSignals(showChartTF and barstate.isconfirmed, 0, chartTag, zC,
      ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4)
 
 // Higher timeframes
-[v1, t1, nBull1, nBear1] = htfSlot(tf1, useTF1, h1BOB, h1SOB, h1BF, h1SF)
-[v2, t2, nBull2, nBear2] = htfSlot(tf2, useTF2, h2BOB, h2SOB, h2BF, h2SF)
-[v3, t3, nBull3, nBear3] = htfSlot(tf3, useTF3, h3BOB, h3SOB, h3BF, h3SF)
+[v1, t1, nBull1, nBear1] = htfSlot(tf1, useTF1, zH1, 1)
+[v2, t2, nBull2, nBear2] = htfSlot(tf2, useTF2, zH2, 2)
+[v3, t3, nBull3, nBear3] = htfSlot(tf3, useTF3, zH3, 3)
+
+if barstate.islast
+    refreshDisplay()
 
 // Market structure (BOS / CHoCH) on chart timeframe
-if showMS and barstate.isconfirmed and cms != 0
+bool msShow = msMode == "All" ? cms != 0 : msMode == "CHoCH only" ? math.abs(cms) == 2 : false
+if msShow and barstate.isconfirmed
     color  c   = cms > 0 ? msBullCol : msBearCol
     string txt = math.abs(cms) == 2 ? "CHoCH" : "BOS"
     line.new(cmsX, cmsLvl, time, cmsLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed)
     label.new(int(math.avg(cmsX, time)), cmsLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
-         style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.small)
+         style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.tiny)
     alert(syminfo.ticker + " " + (cms > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(cmsLvl), alert.freq_once_per_bar)
 
 //==============================================================================
@@ -315,8 +409,8 @@ alertcondition(anyBull, "New Bullish OB/FVG (any TF)", "{{ticker}} new Bullish O
 alertcondition(anyBear, "New Bearish OB/FVG (any TF)", "{{ticker}} new Bearish Order Block / FVG")
 alertcondition(bullTouch, "Price in Bullish zone", "{{ticker}} price entered Bullish OB/FVG zone @ {{close}}")
 alertcondition(bearTouch, "Price in Bearish zone", "{{ticker}} price entered Bearish OB/FVG zone @ {{close}}")
-alertcondition(showMS and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
-alertcondition(showMS and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
+alertcondition(msShow and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
+alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
 
 //==============================================================================
 // DASHBOARD
@@ -336,7 +430,7 @@ if showDash and barstate.islast
     tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
     tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
     int row = 1
-    trendCell(tb, row, tfName(timeframe.period) + " (chart)", cTrend)
+    trendCell(tb, row, chartTag + " (chart)", cTrend)
     if v1
         row += 1
         trendCell(tb, row, tfName(tf1), t1)
