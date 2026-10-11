@@ -124,6 +124,7 @@
 | Skip if close ran > x R | 0.5 | แท่งสัญญาณปิดไกลจากโซนเกินไป ไม่ไล่ราคา |
 | Time stop | 120 นาที | ปิดเทรดที่ค้างนานเกิน |
 | One position at a time | เปิด | ระหว่างมีออเดอร์ (รวม limit ที่รอ) จะข้ามสัญญาณใหม่ |
+| Show unfilled limit orders | ปิด | แสดงป้าย `LMT ⌀` ของคำสั่ง Limit ที่ราคาไม่ย้อนกลับมาให้เข้า (ไม่นับเป็นเทรด) |
 | Show filtered signals (×) | ปิด | แสดง × ตรงสัญญาณที่ถูกกรอง ชี้เมาส์ดูเหตุผล |
 
 ## Session / news / volatility
@@ -141,7 +142,7 @@
 
 ## ตาราง Backtest
 
-ค่าเริ่มต้นเป็นแบบ **Compact** (Trades, Win rate, Expectancy, Net, Profit factor, Max drawdown, Avg SL / hold, Setups → trades + ตัวกรองที่ตัดมากที่สุด) ปิด `Compact stats table` เพื่อดูทุกแถว
+ค่าเริ่มต้นเป็นแบบ **Compact** (Trades, TP / SL / Time stop, Win rate, Expectancy, Net, Profit factor, Max drawdown, Avg SL / hold, Setups → trades + ตัวกรองที่ตัดมากที่สุด) ปิด `Compact stats table` เพื่อดูทุกแถว
 
 | แถว | ความหมาย |
 |---|---|

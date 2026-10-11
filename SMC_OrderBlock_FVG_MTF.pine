@@ -125,6 +125,8 @@ int    maxHold     = input.int(120, "Time stop (minutes, 0 = off)", minval = 0, 
      tooltip = "ถ้าเทรดยังไม่โดน TP/SL ภายในเวลานี้ ปิดที่ราคาปิดแท่ง (นับใน backtest)")
 bool   onePos      = input.bool(true, "One position at a time", group = G_EXEC,
      tooltip = "ระหว่างที่มีออเดอร์ค้าง (รวม limit ที่รอ) สัญญาณใหม่จะถูกข้าม เหมือนการเทรดจริง")
+bool   showUnfilled = input.bool(false, "Show unfilled limit orders (LMT ⌀)", group = G_EXEC,
+     tooltip = "แสดงป้ายของคำสั่ง Limit ที่ราคาไม่ย้อนกลับมาให้เข้า (ไม่นับเป็นเทรด) ปิดไว้เพื่อลดความรก จำนวนดูได้ในตาราง (unfilled)")
 bool   showSkipped = input.bool(false, "Show filtered signals (×)", group = G_EXEC,
      tooltip = "แสดงเครื่องหมาย × ตรงสัญญาณที่ถูกกรองทิ้ง เอาเมาส์ชี้เพื่อดูเหตุผล")
 
@@ -745,8 +747,11 @@ if barstate.isconfirmed and trades.size() > 0
                     done := true
             else if gone or bar_index > t.expiryBar
                 S.miss := S.miss + 1
-                t.lb.set_text((t.isBuy ? "BUY" : "SELL") + " LMT ⌀")
-                t.lb.set_color(color.gray)
+                if showUnfilled
+                    t.lb.set_text((t.isBuy ? "BUY" : "SELL") + " LMT ⌀")
+                    t.lb.set_color(color.gray)
+                else
+                    t.lb.delete()
                 done := true
         else
             bool hitSL = t.isBuy ? low <= t.sl : high + spreadPx >= t.sl
@@ -1044,7 +1049,7 @@ topFilter(Stats s) =>
     best > 0 ? k.get(v.indexof(best)) + " " + str.tostring(best) : "-"
 
 if showStats and showSig and barstate.islast
-    var table st = table.new(posOf(statsPos), 2, statsCompact ? 10 : 18, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table st = table.new(posOf(statsPos), 2, statsCompact ? 11 : 18, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
     int   closed = S.tp + S.sl + S.tm
     int   wins   = S.bW + S.sW
@@ -1058,18 +1063,18 @@ if showStats and showSig and barstate.islast
     st.cell(0, 0, "Backtest · " + model + " · after costs · R:R 1:" + str.tostring(rrRatio), text_color = fg, text_size = size.small)
     st.merge_cells(0, 0, 1, 0)
     statRow(st, 1, "Trades (closed / open)", str.tostring(closed) + " / " + str.tostring(trades.size()), fg)
-    statRow(st, 2, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
-    statRow(st, 3, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
-    statRow(st, 4, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
-    statRow(st, 5, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
-    statRow(st, 6, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
-    statRow(st, 7, "Avg SL / hold", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
-    statRow(st, 8, "Setups → trades", str.tostring(S.setups) + " → " + str.tostring(S.taken) + " (top filter: " + topFilter(S) + ")", fg)
-    if isLTF and chartSec > 900
-        st.cell(0, 9, "⚠ LTF model needs a 1m–5m chart (now " + chartTag + ")", text_color = bad, text_size = size.small)
-        st.merge_cells(0, 9, 1, 9)
+    statRow(st, 2, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
+    statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
+    statRow(st, 4, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
+    statRow(st, 5, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
+    statRow(st, 6, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
+    statRow(st, 7, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
+    statRow(st, 8, "Avg SL / hold", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
+    statRow(st, 9, "Setups → trades", str.tostring(S.setups) + " → " + str.tostring(S.taken) + " (top filter: " + topFilter(S) + ")", fg)
+    if isLTF and chartSec > 300
+        st.cell(0, 10, "⚠ LTF model is built for a 1m–5m chart (now " + chartTag + ")", text_color = bad, text_size = size.small)
+        st.merge_cells(0, 10, 1, 10)
     if not statsCompact
-        statRow(st, 10, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
         statRow(st, 11, "Max losing streak", str.tostring(S.maxStreak), fg)
         statRow(st, 12, "Avg cost", closed > 0 ? str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
         statRow(st, 13, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
