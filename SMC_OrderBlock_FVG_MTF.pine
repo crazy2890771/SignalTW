@@ -118,12 +118,13 @@ bool   blockRoll   = input.bool(true, "Block rollover (16:45–18:15 NY)", group
 bool   blockData   = input.bool(true, "Block US data window", inline = "data", group = G_TIME)
 string sessData    = input.string("0820-0900:3456", "", inline = "data", group = G_TIME,
      tooltip = "เวลา New York, :3456 = อังคาร–ศุกร์ (ช่วงประกาศข่าว 08:30 เช่น CPI, NFP, Jobless Claims)")
+const int NEWS_DEF = 1767274200000   // 2026-01-01 13:30 UTC (input.time needs a const default)
 bool   news1On     = input.bool(false, "News 1", inline = "n1", group = G_TIME)
-int    news1T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n1", group = G_TIME)
+int    news1T      = input.time(NEWS_DEF, "", inline = "n1", group = G_TIME)
 bool   news2On     = input.bool(false, "News 2", inline = "n2", group = G_TIME)
-int    news2T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n2", group = G_TIME)
+int    news2T      = input.time(NEWS_DEF, "", inline = "n2", group = G_TIME)
 bool   news3On     = input.bool(false, "News 3", inline = "n3", group = G_TIME)
-int    news3T      = input.time(timestamp("UTC", 2026, 1, 1, 13, 30), "", inline = "n3", group = G_TIME)
+int    news3T      = input.time(NEWS_DEF, "", inline = "n3", group = G_TIME)
 int    newsBefore  = input.int(15, "News window: min before", minval = 0, inline = "nw", group = G_TIME)
 int    newsAfter   = input.int(30, "after", minval = 0, inline = "nw", group = G_TIME,
      tooltip = "ใส่เวลาข่าวแรงที่ไม่ได้ประกาศ 08:30 NY เช่น FOMC (14:00 NY) แล้วระบบจะไม่เข้าเทรดในช่วงก่อน/หลังข่าว")
