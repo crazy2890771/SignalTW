@@ -13,17 +13,19 @@ const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
 const string G_SIG  = "BUY / SELL Signals"
+const string G_LTF  = "Entry model"
 const string G_EXEC = "Execution & costs (backtest)"
 const string G_TIME = "Session / news / volatility"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
 bool   useTF1      = input.bool(true, "HTF 1", inline = "tf1", group = G_TF)
-string tf1         = input.timeframe("60", "", inline = "tf1", group = G_TF)
+string tf1         = input.timeframe("15", "", inline = "tf1", group = G_TF)
 bool   useTF2      = input.bool(true, "HTF 2", inline = "tf2", group = G_TF)
-string tf2         = input.timeframe("240", "", inline = "tf2", group = G_TF)
-bool   useTF3      = input.bool(false, "HTF 3", inline = "tf3", group = G_TF)
-string tf3         = input.timeframe("D", "", inline = "tf3", group = G_TF)
+string tf2         = input.timeframe("60", "", inline = "tf2", group = G_TF)
+bool   useTF3      = input.bool(true, "HTF 3", inline = "tf3", group = G_TF)
+string tf3         = input.timeframe("240", "", inline = "tf3", group = G_TF,
+     tooltip = "HTF ที่ต่ำกว่าหรือเท่ากับ TF ของกราฟจะไม่แสดง เช่น เปิดกราฟ 15m จะใช้ 1H และ 4H\nสำหรับ scalping แนะนำเปิดกราฟ 3m หรือ 5m แล้วใช้ 15m / 1H / 4H เป็นโซน")
 int    swingLen    = input.int(5, "Swing length", minval = 2, maxval = 50, group = G_TF,
      tooltip = "จำนวนแท่งซ้าย/ขวาที่ใช้หา Swing High/Low สำหรับ Market Structure และ Order Block")
 
@@ -53,7 +55,7 @@ float  fvgMinPct   = input.float(0.0, "Min gap size (%)", minval = 0, step = 0.0
 color  bullFVGCol  = input.color(color.new(#2962ff, 80), "Bullish FVG", inline = "fvgc", group = G_FVG)
 color  bearFVGCol  = input.color(color.new(#ff9800, 80), "Bearish FVG", inline = "fvgc", group = G_FVG)
 
-string msMode      = input.string("CHoCH only", "BOS / CHoCH (chart TF)", options = ["All", "CHoCH only", "None"], group = G_MS)
+string msMode      = input.string("None", "BOS / CHoCH (chart TF)", options = ["All", "CHoCH only", "None"], group = G_MS)
 color  msBullCol   = input.color(#089981, "Bullish", inline = "msc", group = G_MS)
 color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_MS)
 
@@ -82,15 +84,32 @@ color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG
 bool   showStats   = input.bool(true, "Show backtest stats", inline = "bt", group = G_SIG,
      tooltip = "ทดสอบย้อนหลังทุกสัญญาณบนข้อมูลที่โหลดในกราฟ: ชนะเมื่อโดน TP ก่อน, แพ้เมื่อโดน SL ก่อน (ถ้าแท่งเดียวโดนทั้งคู่ นับเป็นแพ้)")
 string statsPos    = input.string("Bottom Left", "", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], inline = "bt", group = G_SIG)
+bool   statsCompact = input.bool(true, "Compact stats table", group = G_SIG,
+     tooltip = "แสดงเฉพาะแถวหลัก (Trades, Win rate, Expectancy, Net, PF, Max DD, Avg SL/hold) ปิดเพื่อดูรายละเอียดทั้งหมด")
+
+string entryModel  = input.string("LTF CHoCH (sweep + displacement)", "Entry model", options = ["LTF CHoCH (sweep + displacement)", "Zone retest (bar close)"], group = G_LTF,
+     tooltip = "LTF CHoCH = ราคาเข้าโซน HTF → กวาด swing low/high ย่อยของกราฟ → CHoCH ด้วยแท่งแรงที่ทิ้ง FVG → เข้าตอนราคาย้อนมาที่ FVG, SL หลังจุดที่กวาด (กราฟ = TF สำหรับเข้าเทรด แนะนำ 3m–5m)\nZone retest = แบบเดิม: ไส้เทียนแตะโซนแล้วปิดกลับ เข้าที่ราคาปิด")
+string ltfEntry    = input.string("FVG edge", "LTF entry", options = ["FVG edge", "FVG 50%", "Market on confirm"], group = G_LTF,
+     tooltip = "FVG edge = Limit ที่ขอบ FVG ฝั่งใกล้ราคา (ได้เข้าบ่อยกว่า)\nFVG 50% = Limit ที่กึ่งกลาง FVG (R:R ดีกว่า แต่บางครั้งไม่ได้เข้า)\nMarket on confirm = เข้าทันทีที่ราคาปิดแท่งยืนยัน")
+bool   needSweep   = input.bool(true, "Require liquidity sweep", group = G_LTF,
+     tooltip = "ต้องมีไส้เทียนทะลุ swing low (BUY) / swing high (SELL) ย่อยล่าสุด ระหว่างที่ราคาอยู่ในโซน ก่อนเกิด CHoCH")
+int    ltfLen      = input.int(2, "Internal swing length", minval = 1, maxval = 10, group = G_LTF,
+     tooltip = "จำนวนแท่งซ้าย/ขวาสำหรับ swing ย่อยของกราฟ ที่ใช้หา sweep และ CHoCH (ค่าน้อย = ไวขึ้น)")
+float  dispBody    = input.float(0.5, "Displacement: body ≥ x range", minval = 0, maxval = 1, step = 0.05, inline = "disp", group = G_LTF)
+float  dispAtr     = input.float(1.0, "and range ≥ x ATR", minval = 0, step = 0.1, inline = "disp", group = G_LTF,
+     tooltip = "แท่งกลางของ FVG ต้องเป็นแท่งแรง: ตัวเทียน ≥ x ของความยาวแท่ง และความยาวแท่ง ≥ x × ATR14")
+int    armMin      = input.int(90, "Setup window (minutes)", minval = 5, step = 15, group = G_LTF,
+     tooltip = "หลังราคาแตะโซน HTF ต้องเกิด sweep + CHoCH + FVG ภายในเวลานี้ ไม่งั้นยกเลิก setup")
 
 float  spreadPx    = input.float(0.30, "Spread", minval = 0, step = 0.05, inline = "cost", group = G_EXEC)
 float  slipPx      = input.float(0.10, "Slippage", minval = 0, step = 0.05, inline = "cost", group = G_EXEC,
      tooltip = "หน่วยเป็นราคา (XAUUSD: 0.30 = 30 cents) ใช้คำนวณ backtest แบบมีต้นทุน\nกราฟถือเป็นราคา Bid: BUY เข้าที่ Ask (+spread +slippage), SELL โดน SL เมื่อ Ask แตะ\nSlippage คิดกับคำสั่ง market และ stop (TP เป็น limit ไม่มี slippage)\nXAUUSD ช่วงตลาดคึกคักประมาณ 0.20–0.40 ถ้าใช้กับสินค้าอื่นต้องปรับค่านี้")
-string entryMode   = input.string("Market (bar close)", "Entry", options = ["Market (bar close)", "Limit at zone edge"], inline = "ent", group = G_EXEC)
-int    limitBars   = input.int(4, "valid bars", minval = 1, maxval = 50, inline = "ent", group = G_EXEC,
-     tooltip = "Market = เข้าที่ราคาปิดแท่งสัญญาณ\nLimit at zone edge = ตั้ง limit ที่ขอบโซนฝั่งใกล้ราคา รอราคาย้อนกลับมา (ความเสี่ยงต่อเทรดเล็กลง แต่บางครั้งไม่ได้เข้า) ยกเลิกเมื่อครบจำนวนแท่ง หรือราคาไปถึง TP ก่อน")
-string slMode      = input.string("Signal wick", "Stop-loss at", options = ["Signal wick", "Zone edge"], group = G_EXEC,
-     tooltip = "Signal wick = ใต้ไส้เทียนต่ำสุด (BUY) / เหนือไส้สูงสุด (SELL) ของแท่งสัญญาณและแท่งก่อนหน้า คือจุดที่กวาด liquidity\nZone edge = เลยขอบโซนฝั่งไกล (แบบเดิม มักกว้างกว่ามาก)\nSELL บวก spread ให้อัตโนมัติ เพราะ SL ของ SELL โดนด้วยราคา Ask")
+int    limitBars   = input.int(4, "Limit order valid (bars)", minval = 1, maxval = 50, group = G_EXEC,
+     tooltip = "คำสั่ง Limit ที่ยังไม่ได้เข้า จะถูกยกเลิกเมื่อครบจำนวนแท่งนี้ หรือเมื่อราคาไปถึง TP ก่อน")
+string entryMode   = input.string("Market (bar close)", "Retest entry", options = ["Market (bar close)", "Limit at zone edge"], group = G_EXEC,
+     tooltip = "ใช้เฉพาะ Entry model = Zone retest\nMarket = เข้าที่ราคาปิดแท่งสัญญาณ\nLimit at zone edge = ตั้ง limit ที่ขอบโซนฝั่งใกล้ราคา")
+string slMode      = input.string("Signal wick", "Retest stop-loss at", options = ["Signal wick", "Zone edge"], group = G_EXEC,
+     tooltip = "ใช้เฉพาะ Entry model = Zone retest (LTF CHoCH วาง SL หลังจุดที่กวาดเสมอ)\nSignal wick = ใต้ไส้เทียนต่ำสุด (BUY) / เหนือไส้สูงสุด (SELL) ของแท่งสัญญาณและแท่งก่อนหน้า คือจุดที่กวาด liquidity\nZone edge = เลยขอบโซนฝั่งไกล (แบบเดิม มักกว้างกว่ามาก)\nSELL บวก spread ให้อัตโนมัติ เพราะ SL ของ SELL โดนด้วยราคา Ask")
 float  bufSpread   = input.float(2.0, "SL buffer: x spread", minval = 0, step = 0.5, inline = "buf", group = G_EXEC)
 float  bufAtr      = input.float(0.15, "or x ATR", minval = 0, step = 0.05, inline = "buf", group = G_EXEC,
      tooltip = "ระยะเผื่อของ SL = ค่าที่มากกว่าระหว่าง (x × spread) กับ (x × ATR14 ของกราฟ)")
@@ -100,7 +119,7 @@ float  maxSlAtr    = input.float(1.5, "Skip if SL > x ATR", minval = 0, step = 0
      tooltip = "ไม่เข้าเทรดถ้า SL กว้างเกิน x × ATR14 ของกราฟ (0 = ไม่จำกัด) กันเทรดที่ความเสี่ยงใหญ่เกินสำหรับการเทรดสั้น")
 float  maxChase    = input.float(0.5, "Skip if close ran > x R from zone", minval = 0, step = 0.1, group = G_EXEC,
      tooltip = "เฉพาะ Market entry: ถ้าแท่งสัญญาณปิดห่างจากขอบโซนเกิน x เท่าของ Risk แปลว่าราคาวิ่งไปแล้ว ไม่ไล่ราคา (0 = ปิด)")
-int    maxHold     = input.int(240, "Time stop (minutes, 0 = off)", minval = 0, step = 15, group = G_EXEC,
+int    maxHold     = input.int(120, "Time stop (minutes, 0 = off)", minval = 0, step = 15, group = G_EXEC,
      tooltip = "ถ้าเทรดยังไม่โดน TP/SL ภายในเวลานี้ ปิดที่ราคาปิดแท่ง (นับใน backtest)")
 bool   onePos      = input.bool(true, "One position at a time", group = G_EXEC,
      tooltip = "ระหว่างที่มีออเดอร์ค้าง (รวม limit ที่รอ) สัญญาณใหม่จะถูกข้าม เหมือนการเทรดจริง")
@@ -150,6 +169,21 @@ float  atrC    = ta.atr(14)
 float  atrAvg  = ta.sma(atrC, 100)
 float  lo2     = ta.lowest(low, 2)
 float  hi2     = ta.highest(high, 2)
+bool   isLTF   = entryModel != "Zone retest (bar close)"
+
+// Internal (execution-TF) swings and displacement candles for the LTF entry model
+float  iph     = ta.pivothigh(high, ltfLen, ltfLen)
+float  ipl     = ta.pivotlow(low, ltfLen, ltfLen)
+var float lastIPH = na
+var float lastIPL = na
+if not na(iph)
+    lastIPH := iph
+if not na(ipl)
+    lastIPL := ipl
+bool   dispUp1 = close[1] > open[1] and close[1] - open[1] >= dispBody * (high[1] - low[1]) and high[1] - low[1] >= dispAtr * atrC[1]
+bool   dispDn1 = close[1] < open[1] and open[1] - close[1] >= dispBody * (high[1] - low[1]) and high[1] - low[1] >= dispAtr * atrC[1]
+bool   dispBullFvg = low > high[2] and dispUp1      // FVG left by a bullish displacement candle (bar[1])
+bool   dispBearFvg = high < low[2] and dispDn1
 string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
 
 //==============================================================================
@@ -423,6 +457,34 @@ scanSignals(array<Zone> zs, bool allowBuy, bool allowSell, int minRank) =>
                 sBot       := na(sBot) ? z.bot : math.min(sBot, z.bot)
     [buy, bBot, bTop, sell, sTop, sBot]
 
+// LTF model: active (fresh, departed, unused) zones that price is trading in on this bar.
+// Returns [bull touch, bull top, bull bottom, bear touch, bear top, bear bottom] (outer bounds of all touched zones).
+scanTouch(array<Zone> zs, int minRank) =>
+    bool  bT   = false
+    bool  sT   = false
+    float bTop = na
+    float bBot = na
+    float sTop = na
+    float sBot = na
+    for z in zs
+        bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
+        if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and z.rank >= minRank and typeOk and high >= z.bot and low <= z.top
+            if z.bull
+                bT   := true
+                bTop := na(bTop) ? z.top : math.max(bTop, z.top)
+                bBot := na(bBot) ? z.bot : math.min(bBot, z.bot)
+            else
+                sT   := true
+                sTop := na(sTop) ? z.top : math.max(sTop, z.top)
+                sBot := na(sBot) ? z.bot : math.min(sBot, z.bot)
+    [bT, bTop, bBot, sT, sTop, sBot]
+
+// Retire every same-side zone overlapping a price range (one trade per price area)
+retireRange(array<Zone> zs, bool bull, float top, float bot) =>
+    for z in zs
+        if z.bull == bull and z.top >= bot and z.bot <= top
+            z.signaled := true
+
 //==============================================================================
 // STATE
 //==============================================================================
@@ -550,10 +612,10 @@ bool  volOk  = not useVol or na(atrRel) or (atrRel >= volMin and atrRel <= volMa
 bgcolor(shadeSess and timeOn and showSig ? (not newsOk ? color.new(color.red, 92) : useSess and (inLon or inNY) ? color.new(color.blue, 95) : na) : na,
      title = "Session shading")
 
-[sb0, sbb0, sbt0, ss0, sst0, ssb0] = scanSignals(zC, canBuy, canSell, sigMinRank)
-[sb1, sbb1, sbt1, ss1, sst1, ssb1] = scanSignals(zH1, canBuy, canSell, sigMinRank)
-[sb2, sbb2, sbt2, ss2, sst2, ssb2] = scanSignals(zH2, canBuy, canSell, sigMinRank)
-[sb3, sbb3, sbt3, ss3, sst3, ssb3] = scanSignals(zH3, canBuy, canSell, sigMinRank)
+[sb0, sbb0, sbt0, ss0, sst0, ssb0] = scanSignals(zC, canBuy and not isLTF, canSell and not isLTF, sigMinRank)
+[sb1, sbb1, sbt1, ss1, sst1, ssb1] = scanSignals(zH1, canBuy and not isLTF, canSell and not isLTF, sigMinRank)
+[sb2, sbb2, sbt2, ss2, sst2, ssb2] = scanSignals(zH2, canBuy and not isLTF, canSell and not isLTF, sigMinRank)
+[sb3, sbb3, sbt3, ss3, sst3, ssb3] = scanSignals(zH3, canBuy and not isLTF, canSell and not isLTF, sigMinRank)
 bool  rawBuy  = sb0 or sb1 or sb2 or sb3
 bool  rawSell = ss0 or ss1 or ss2 or ss3
 // Conflicting signals on the same bar cancel each other
@@ -685,41 +747,188 @@ if barstate.isconfirmed and trades.size() > 0
         if done
             trades.remove(i)
 
-// Entry / SL / TP for a new signal. Returns [entry, sl, tp, risk, chase]
-planTrade(bool isBuy, float far, float near, bool lim) =>
+// Zone-retest model: entry / SL. Returns [entry, sl, chase]
+planRetest(bool isBuy, float far, float near, bool lim) =>
     float buf   = math.max(bufSpread * spreadPx, bufAtr * atrC)
     float sl    = isBuy ? (slMode == "Signal wick" ? lo2 : far) - buf : (slMode == "Signal wick" ? hi2 : far) + spreadPx + buf
     float entry = lim ? near : isBuy ? close + spreadPx + slipPx : close - slipPx
-    float risk  = isBuy ? entry - sl : sl - entry
-    float tp    = isBuy ? entry + rrRatio * risk : entry - rrRatio * risk
     float chase = isBuy ? close - near : near - close
-    [entry, sl, tp, risk, chase]
+    [entry, sl, chase]
 
-drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float risk) =>
+drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float risk, string info) =>
     color  c    = isBuy ? buyCol : sellCol
     string side = isBuy ? "BUY" : "SELL"
     string tip  = side + (lim ? " LIMIT" : "") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) +
-         "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")"
+         "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")" + info
     label lb = label.new(bar_index, close, side + (lim ? " LMT" : ""), yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
          textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
     alert(syminfo.ticker + " " + side + (lim ? " LIMIT" : "") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
     lb
 
-// Signal -> filters -> trade
+//==============================================================================
+// LTF ENTRY MODEL: HTF zone -> sweep -> CHoCH with displacement FVG -> entry at the FVG
+//==============================================================================
+int   ltfMinRank = eZoneTF == "All TF" ? 0 : (v1 or v2 or v3) ? 1 : 0
+[tb0, tbt0, tbb0, ts0, tst0, tsb0] = scanTouch(zC, ltfMinRank)
+[tb1, tbt1, tbb1, ts1, tst1, tsb1] = scanTouch(zH1, ltfMinRank)
+[tb2, tbt2, tbb2, ts2, tst2, tsb2] = scanTouch(zH2, ltfMinRank)
+[tb3, tbt3, tbb3, ts3, tst3, tsb3] = scanTouch(zH3, ltfMinRank)
+bool  bTouch    = tb0 or tb1 or tb2 or tb3
+bool  sTouch    = ts0 or ts1 or ts2 or ts3
+float bTouchTop = maxNa(maxNa(tbt0, tbt1), maxNa(tbt2, tbt3))
+float bTouchBot = minNa(minNa(tbb0, tbb1), minNa(tbb2, tbb3))
+float sTouchTop = maxNa(maxNa(tst0, tst1), maxNa(tst2, tst3))
+float sTouchBot = minNa(minNa(tsb0, tsb1), minNa(tsb2, tsb3))
+
+// Bullish setup state
+var bool  bArm    = false
+var int   bArmT   = na
+var float bArmTop = na
+var float bArmBot = na
+var float bSweep  = na     // lowest low since the zone was touched
+var bool  bSwept  = false
+var bool  bChoch  = false
+var float bFvgT   = na
+var float bFvgB   = na
+// Bearish setup state
+var bool  sArm    = false
+var int   sArmT   = na
+var float sArmTop = na
+var float sArmBot = na
+var float sSweep  = na     // highest high since the zone was touched
+var bool  sSwept  = false
+var bool  sChoch  = false
+var float sFvgT   = na
+var float sFvgB   = na
+
+bool ltfBuy  = false
+bool ltfSell = false
+if isLTF and showSig and barstate.isconfirmed
+    // Expire / invalidate (setup window over, or price closed through the whole zone)
+    if bArm and (time - bArmT > armMin * 60000 or close < bArmBot)
+        bArm := false
+    if sArm and (time - sArmT > armMin * 60000 or close > sArmTop)
+        sArm := false
+    // Arm on a zone touch, or widen the zone range while armed
+    if bTouch
+        if not bArm
+            bArm    := true
+            bArmT   := time
+            bArmTop := bTouchTop
+            bArmBot := bTouchBot
+            bSweep  := low
+            bSwept  := not needSweep
+            bChoch  := false
+            bFvgT   := na
+            bFvgB   := na
+        else
+            bArmTop := math.max(bArmTop, bTouchTop)
+            bArmBot := math.min(bArmBot, bTouchBot)
+    if sTouch
+        if not sArm
+            sArm    := true
+            sArmT   := time
+            sArmTop := sTouchTop
+            sArmBot := sTouchBot
+            sSweep  := high
+            sSwept  := not needSweep
+            sChoch  := false
+            sFvgT   := na
+            sFvgB   := na
+        else
+            sArmTop := math.max(sArmTop, sTouchTop)
+            sArmBot := math.min(sArmBot, sTouchBot)
+    // Progress: sweep -> displacement FVG -> CHoCH
+    if bArm
+        bSweep := math.min(bSweep, low)
+        if not bSwept and not na(lastIPL) and low < lastIPL
+            bSwept := true
+        if bSwept and dispBullFvg
+            bFvgT := low
+            bFvgB := high[2]
+        if bSwept and not na(lastIPH) and close > lastIPH
+            bChoch := true
+        ltfBuy := bChoch and not na(bFvgT)
+    if sArm
+        sSweep := math.max(sSweep, high)
+        if not sSwept and not na(lastIPH) and high > lastIPH
+            sSwept := true
+        if sSwept and dispBearFvg
+            sFvgT := low[2]
+            sFvgB := high
+        if sSwept and not na(lastIPL) and close < lastIPL
+            sChoch := true
+        ltfSell := sChoch and not na(sFvgB)
+    // Conflicting setups on the same bar cancel each other
+    if ltfBuy and ltfSell
+        ltfBuy  := false
+        ltfSell := false
+        bArm    := false
+        sArm    := false
+    // A completed setup is consumed; it becomes a candidate only if bias / P-D / cooldown allow it
+    if ltfBuy
+        bArm   := false
+        ltfBuy := canBuy
+    if ltfSell
+        sArm    := false
+        ltfSell := canSell
+
+//==============================================================================
+// CANDIDATE -> FILTERS -> TRADE
+//==============================================================================
+bool   candBuy  = false
+bool   candSell = false
+float  cEntry   = na
+float  cSl      = na
+float  cChase   = 0.0
+bool   cLim     = false
+string cInfo    = ""
+float  ltfBuf   = math.max(bufSpread * spreadPx, bufAtr * atrC)
+if not isLTF and (rawBuy or rawSell)
+    candBuy  := rawBuy
+    candSell := rawSell
+    markTouched(zC, rawBuy)
+    markTouched(zH1, rawBuy)
+    markTouched(zH2, rawBuy)
+    markTouched(zH3, rawBuy)
+    float far  = rawBuy ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
+    float near = rawBuy ? maxNa(maxNa(sbt0, sbt1), maxNa(sbt2, sbt3)) : minNa(minNa(ssb0, ssb1), minNa(ssb2, ssb3))
+    cLim := entryMode == "Limit at zone edge"
+    [e0, sl0, ch0] = planRetest(rawBuy, far, near, cLim)
+    cEntry := e0
+    cSl    := sl0
+    cChase := ch0
+    cInfo  := "\nModel: zone retest"
+else if ltfBuy
+    candBuy := true
+    retireRange(zC, true, bArmTop, bArmBot)
+    retireRange(zH1, true, bArmTop, bArmBot)
+    retireRange(zH2, true, bArmTop, bArmBot)
+    retireRange(zH3, true, bArmTop, bArmBot)
+    cLim   := ltfEntry != "Market on confirm"
+    cEntry := ltfEntry == "FVG edge" ? bFvgT : ltfEntry == "FVG 50%" ? (bFvgT + bFvgB) / 2 : close + spreadPx + slipPx
+    cSl    := bSweep - ltfBuf
+    cChase := close - bFvgT
+    cInfo  := "\nModel: LTF CHoCH\nZone: " + fmt(bArmBot) + " – " + fmt(bArmTop) + "\nSweep low: " + fmt(bSweep) + "\nFVG: " + fmt(bFvgB) + " – " + fmt(bFvgT)
+else if ltfSell
+    candSell := true
+    retireRange(zC, false, sArmTop, sArmBot)
+    retireRange(zH1, false, sArmTop, sArmBot)
+    retireRange(zH2, false, sArmTop, sArmBot)
+    retireRange(zH3, false, sArmTop, sArmBot)
+    cLim   := ltfEntry != "Market on confirm"
+    cEntry := ltfEntry == "FVG edge" ? sFvgB : ltfEntry == "FVG 50%" ? (sFvgT + sFvgB) / 2 : close - slipPx
+    cSl    := sSweep + spreadPx + ltfBuf
+    cChase := sFvgB - close
+    cInfo  := "\nModel: LTF CHoCH\nZone: " + fmt(sArmBot) + " – " + fmt(sArmTop) + "\nSweep high: " + fmt(sSweep) + "\nFVG: " + fmt(sFvgB) + " – " + fmt(sFvgT)
+
 bool buySig  = false
 bool sellSig = false
-if rawBuy or rawSell
-    bool isBuy = rawBuy
-    // One signal per price area: retire every same-side zone the signal bar touched (all TFs), taken or not
-    markTouched(zC, isBuy)
-    markTouched(zH1, isBuy)
-    markTouched(zH2, isBuy)
-    markTouched(zH3, isBuy)
-    float far  = isBuy ? minNa(minNa(sbb0, sbb1), minNa(sbb2, sbb3)) : maxNa(maxNa(sst0, sst1), maxNa(sst2, sst3))
-    float near = isBuy ? maxNa(maxNa(sbt0, sbt1), maxNa(sbt2, sbt3)) : minNa(minNa(ssb0, ssb1), minNa(ssb2, ssb3))
-    bool  lim  = entryMode == "Limit at zone edge"
-    [en, sl, tp, risk, chase] = planTrade(isBuy, far, near, lim)
-    string why = ""
+if candBuy or candSell
+    bool   isBuy = candBuy
+    float  risk  = isBuy ? cEntry - cSl : cSl - cEntry
+    float  tp    = isBuy ? cEntry + rrRatio * risk : cEntry - rrRatio * risk
+    string why   = ""
     if onePos and trades.size() > 0
         why    := "already in a position"
         S.fPos := S.fPos + 1
@@ -732,31 +941,31 @@ if rawBuy or rawSell
     else if not volOk
         why    := "volatility out of range (ATR x" + str.tostring(atrRel, "#.##") + " of average)"
         S.fVol := S.fVol + 1
-    else if risk <= 0 or (spreadPx > 0 and risk < minSlSpread * spreadPx)
+    else if na(risk) or risk <= 0 or (spreadPx > 0 and risk < minSlSpread * spreadPx)
         why      := "SL too small vs spread (" + fmt(risk) + ")"
         S.fSlMin := S.fSlMin + 1
     else if maxSlAtr > 0 and risk > maxSlAtr * atrC
         why      := "SL too wide (" + fmt(risk) + " = " + str.tostring(risk / atrC, "#.#") + " ATR)"
         S.fSlMax := S.fSlMax + 1
-    else if not lim and maxChase > 0 and chase > maxChase * risk
-        why      := "price already ran " + str.tostring(chase / risk, "#.##") + "R from the zone"
+    else if not cLim and maxChase > 0 and cChase > maxChase * risk
+        why      := "price already ran " + str.tostring(cChase / risk, "#.##") + "R from the entry zone"
         S.fChase := S.fChase + 1
     if why == ""
         buySig  := isBuy
         sellSig := not isBuy
         lastSig := time
-        label lb = drawSignal(isBuy, lim, en, sl, tp, risk)
-        trades.push(Trade.new(lb, isBuy, en, sl, tp, risk, time_close, bar_index + limitBars, not lim, (spreadPx + (lim ? 1 : 2) * slipPx) / risk))
+        label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, risk, cInfo)
+        trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk))
         if showSLTP
             line.delete(slLine)
             line.delete(tpLine)
             line.delete(enLine)
-            enLine := line.new(bar_index, en, bar_index + 20, en, color = chart.fg_color, style = line.style_dotted)
-            slLine := line.new(bar_index, sl, bar_index + 20, sl, color = sellCol, width = 2)
+            enLine := line.new(bar_index, cEntry, bar_index + 20, cEntry, color = chart.fg_color, style = line.style_dotted)
+            slLine := line.new(bar_index, cSl, bar_index + 20, cSl, color = sellCol, width = 2)
             tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
     else if showSkipped
         label.new(bar_index, close, "×", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = color(na), textcolor = color.gray,
-             style = label.style_none, size = size.normal, tooltip = (isBuy ? "BUY" : "SELL") + " skipped: " + why)
+             style = label.style_none, size = size.normal, tooltip = (isBuy ? "BUY" : "SELL") + " skipped: " + why + cInfo)
 
 if barstate.islast
     refreshDisplay()
@@ -801,7 +1010,7 @@ sideStat(int n, int w, float r) =>
     n > 0 ? str.tostring(n) + " · " + str.tostring(100.0 * w / n, "#") + "% · " + rStr(r) : "-"
 
 if showStats and showSig and barstate.islast
-    var table st = table.new(posOf(statsPos), 2, 15, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table st = table.new(posOf(statsPos), 2, statsCompact ? 8 : 15, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
     int   closed = S.tp + S.sl + S.tm
     int   wins   = S.bW + S.sW
@@ -811,23 +1020,25 @@ if showStats and showSig and barstate.islast
     color good   = msBullCol
     color bad    = msBearCol
     color fg     = chart.fg_color
-    st.cell(0, 0, "Backtest · after costs · R:R 1:" + str.tostring(rrRatio), text_color = fg, text_size = size.small)
+    string model = isLTF ? "LTF CHoCH" : "Zone retest"
+    st.cell(0, 0, "Backtest · " + model + " · after costs · R:R 1:" + str.tostring(rrRatio), text_color = fg, text_size = size.small)
     st.merge_cells(0, 0, 1, 0)
     statRow(st, 1, "Trades (closed / open)", str.tostring(closed) + " / " + str.tostring(trades.size()), fg)
-    statRow(st, 2, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
-    statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
-    statRow(st, 4, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
-    statRow(st, 5, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
-    statRow(st, 6, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
-    statRow(st, 7, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
-    statRow(st, 8, "Max losing streak", str.tostring(S.maxStreak), fg)
-    statRow(st, 9, "Avg SL / cost", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
-    statRow(st, 10, "Avg hold", closed > 0 ? str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
-    statRow(st, 11, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
-    statRow(st, 12, "SELL (n · win · net)", sideStat(S.sN, S.sW, S.sR), fg)
-    statRow(st, 13, "Filtered: time", "session " + str.tostring(S.fSess) + " · news " + str.tostring(S.fNews) + " · vol " + str.tostring(S.fVol), fg)
-    statRow(st, 14, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
-         " · in pos " + str.tostring(S.fPos) + (entryMode == "Limit at zone edge" ? " · unfilled " + str.tostring(S.miss) : ""), fg)
+    statRow(st, 2, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
+    statRow(st, 3, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
+    statRow(st, 4, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
+    statRow(st, 5, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
+    statRow(st, 6, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
+    statRow(st, 7, "Avg SL / hold", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
+    if not statsCompact
+        statRow(st, 8, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
+        statRow(st, 9, "Max losing streak", str.tostring(S.maxStreak), fg)
+        statRow(st, 10, "Avg cost", closed > 0 ? str.tostring(S.sumCost / closed, "#.##") + " R" : "-", fg)
+        statRow(st, 11, "BUY (n · win · net)", sideStat(S.bN, S.bW, S.bR), fg)
+        statRow(st, 12, "SELL (n · win · net)", sideStat(S.sN, S.sW, S.sR), fg)
+        statRow(st, 13, "Filtered: time", "session " + str.tostring(S.fSess) + " · news " + str.tostring(S.fNews) + " · vol " + str.tostring(S.fVol), fg)
+        statRow(st, 14, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
+             " · in pos " + str.tostring(S.fPos) + " · unfilled " + str.tostring(S.miss), fg)
 
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
