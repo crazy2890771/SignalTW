@@ -15,6 +15,8 @@ const string G_MS   = "Market Structure"
 const string G_SIG  = "BUY / SELL Signals"
 const string G_LTF  = "Entry model"
 const string G_EXEC = "Execution & costs (backtest)"
+const string G_EXIT = "Exit management"
+const string G_RISK = "Risk management"
 const string G_TIME = "Session / news / volatility"
 const string G_DASH = "Dashboard"
 
@@ -129,6 +131,26 @@ bool   showUnfilled = input.bool(false, "Show unfilled limit orders (LMT ⌀)", 
      tooltip = "แสดงป้ายของคำสั่ง Limit ที่ราคาไม่ย้อนกลับมาให้เข้า (ไม่นับเป็นเทรด) ปิดไว้เพื่อลดความรก จำนวนดูได้ในตาราง (unfilled)")
 bool   showSkipped = input.bool(false, "Show filtered signals (×)", group = G_EXEC,
      tooltip = "แสดงเครื่องหมาย × ตรงสัญญาณที่ถูกกรองทิ้ง เอาเมาส์ชี้เพื่อดูเหตุผล")
+
+bool   usePartial  = input.bool(true, "Partial take-profit + break-even", group = G_EXIT,
+     tooltip = "ปิดบางส่วนที่ TP1 แล้วเลื่อน SL ของส่วนที่เหลือไปที่ราคาเข้า (break-even) ส่วนที่เหลือวิ่งไป TP ตาม R:R")
+float  tp1R        = input.float(1.0, "TP1 at x R", minval = 0.25, step = 0.25, inline = "tp1", group = G_EXIT)
+float  tp1Pct      = input.float(50, "close %", minval = 1, maxval = 99, step = 5, inline = "tp1", group = G_EXIT,
+     tooltip = "ค่าเริ่มต้น: ปิด 50% ที่ 1R แล้วเลื่อน SL ไปจุดคุ้มทุน (ต้องน้อยกว่า R:R ของ TP สุดท้าย)")
+float  minRoomR    = input.float(1.0, "Skip if opposing HTF zone < x R away", minval = 0, step = 0.25, group = G_EXIT,
+     tooltip = "ไม่เข้าเทรดถ้ามีโซน HTF ฝั่งตรงข้าม (เช่น BUY แต่มีโซน Bearish ของ HTF อยู่ข้างบน) อยู่ใกล้กว่า x เท่าของ Risk เพราะราคามักชะลอหรือกลับตัวที่โซนนั้นก่อนถึงเป้า (0 = ปิด)")
+
+float  acctSize    = input.float(10000, "Account balance", minval = 0, step = 1000, group = G_RISK)
+float  riskPct     = input.float(0.5, "Risk per trade (%)", minval = 0.05, maxval = 10, step = 0.05, group = G_RISK,
+     tooltip = "ขนาด lot คำนวณจาก (ทุน × %) ÷ (ระยะ SL × จำนวนหน่วยต่อ lot) แสดงในป้ายสัญญาณและข้อความ Alert\nscalping แนะนำ 0.25–0.5%")
+float  lotUnits    = input.float(100, "Units per 1.0 lot", minval = 0.0001, group = G_RISK, inline = "lot")
+float  lotStep     = input.float(0.01, "lot step", minval = 0.0001, step = 0.01, group = G_RISK, inline = "lot",
+     tooltip = "XAUUSD: 1 lot = 100 oz, lot ขั้นต่ำ/ขั้นละ 0.01 (ดูสเปกของโบรกเกอร์)")
+bool   useDaily    = input.bool(true, "Daily limits", group = G_RISK,
+     tooltip = "หยุดรับสัญญาณใหม่ในวันนั้น (วันเทรดของโบรกเกอร์) เมื่อขาดทุนสะสมถึงขีดจำกัด, แพ้ติดกันครบ หรือเทรดครบจำนวน (นับใน backtest ด้วย)")
+float  maxDayLossR = input.float(2.0, "Stop the day at −x R", minval = 0, step = 0.5, group = G_RISK)
+int    maxLossRun  = input.int(3, "or after x losses in a row", minval = 0, group = G_RISK)
+int    maxDayTrades = input.int(8, "Max trades per day (0 = off)", minval = 0, group = G_RISK)
 
 bool   useSess     = input.bool(true, "Trade only in sessions", group = G_TIME,
      tooltip = "ใช้กับกราฟ TF ไม่เกิน 1H เวลาอ้างอิงตามเมืองนั้น ๆ (ปรับ Daylight Saving อัตโนมัติ)\nค่าเริ่มต้น: London 07:00–12:00 และ New York 08:00–13:00 (ประมาณ 13:00–18:00 และ 19:00–00:00 เวลาไทยช่วงหน้าร้อนของฝั่งนั้น)")
@@ -410,6 +432,7 @@ updateZones(array<Zone> zs) =>
     [bullTouch, bearTouch]
 
 fmt(float p) => str.tostring(p, format.mintick)
+rStr(float r) => (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + " R"
 
 // Creates zones for one timeframe, returns [newBullOB, newBearOB, newBullFVG, newBearFVG]
 handleSignals(bool isNew, int rank, string tag, array<Zone> zs,
@@ -643,9 +666,10 @@ markTouched(array<Zone> zs, bool bull) =>
 
 minNa(float a, float b) => na(a) ? b : na(b) ? a : math.min(a, b)
 maxNa(float a, float b) => na(a) ? b : na(b) ? a : math.max(a, b)
-var line slLine = na
-var line tpLine = na
-var line enLine = na
+var line slLine  = na
+var line tpLine  = na
+var line tp1Line = na
+var line enLine  = na
 
 //==============================================================================
 // BACKTEST ENGINE (after costs; chart prices are treated as Bid)
@@ -661,6 +685,9 @@ type Trade
     int   expiryBar   // pending limit is cancelled after this bar
     bool  filled
     float cost        // estimated spread + slippage cost in R
+    float tp1         // partial take-profit price (na = off)
+    bool  part  = false   // TP1 taken, stop moved to break-even
+    float realR = 0.0     // R already realised by the partial close
 
 type Stats
     int   tp        = 0
@@ -695,16 +722,30 @@ type Stats
     int   fCool     = 0
     int   setups    = 0
     int   taken     = 0
+    int   be        = 0
+    int   fDaily    = 0
+    int   fRoom     = 0
+    float dayR      = 0.0
+    int   dayRun    = 0
+    int   dayTrades = 0
 
 var array<Trade> trades = array.new<Trade>()
 var Stats        S      = Stats.new()
 
-// kind: 1 = TP, -1 = SL, 0 = time stop
+float tp1Frac  = tp1Pct / 100
+bool  partOn   = usePartial and tp1R < rrRatio
+
+// kind: 1 = TP, -1 = SL, 0 = time stop, 2 = break-even stop after TP1.
+// R of the whole position = R realised at TP1 + remaining fraction x R of the final exit.
 closeTrade(Stats s, Trade t, float exitPx, int kind) =>
-    float r = (t.isBuy ? exitPx - t.entry : t.entry - exitPx) / t.risk
+    float rx = (t.isBuy ? exitPx - t.entry : t.entry - exitPx) / t.risk
+    float r  = t.part ? t.realR + (1 - tp1Frac) * rx : rx
     s.tp        := s.tp + (kind == 1 ? 1 : 0)
     s.sl        := s.sl + (kind == -1 ? 1 : 0)
     s.tm        := s.tm + (kind == 0 ? 1 : 0)
+    s.be        := s.be + (kind == 2 ? 1 : 0)
+    s.dayR      := s.dayR + r
+    s.dayRun    := r < 0 ? s.dayRun + 1 : 0
     s.sumR      := s.sumR + r
     s.gWin      := s.gWin + math.max(r, 0.0)
     s.gLoss     := s.gLoss + math.max(-r, 0.0)
@@ -723,11 +764,17 @@ closeTrade(Stats s, Trade t, float exitPx, int kind) =>
         s.sN := s.sN + 1
         s.sW := s.sW + (r > 0 ? 1 : 0)
         s.sR := s.sR + r
-    string mark = kind == 1 ? " ✔ " : kind == -1 ? " ✘ " : " ⏱ "
+    string mark = kind == 1 ? " ✔ " : kind == -1 ? " ✘ " : kind == 2 ? " ½ " : " ⏱ "
     t.lb.set_text((t.isBuy ? "BUY" : "SELL") + mark + (r >= 0 ? "+" : "") + str.tostring(r, "#.#") + "R")
     if r < 0
         t.lb.set_color(color.gray)
     r
+
+// New broker trading day -> reset daily limits
+if timeframe.change("D")
+    S.dayR      := 0.0
+    S.dayRun    := 0
+    S.dayTrades := 0
 
 // Resolve open / pending trades on this bar, before new signals (the entry bar itself is never counted).
 // Same-bar SL and TP -> SL (conservative).
@@ -737,7 +784,8 @@ if barstate.isconfirmed and trades.size() > 0
         bool  done = false
         if not t.filled
             bool hitFill = t.isBuy ? low + spreadPx <= t.entry : high >= t.entry
-            bool gone = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp
+            float tgt = na(t.tp1) ? t.tp : t.tp1     // price reached the first target without us -> cancel
+            bool gone = t.isBuy ? high >= tgt : low + spreadPx <= tgt
             if hitFill
                 t.filled   := true
                 t.openTime := time
@@ -754,19 +802,47 @@ if barstate.isconfirmed and trades.size() > 0
                     t.lb.delete()
                 done := true
         else
-            bool hitSL = t.isBuy ? low <= t.sl : high + spreadPx >= t.sl
-            bool hitTP = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp
+            bool hitSL  = t.isBuy ? low <= t.sl : high + spreadPx >= t.sl
+            bool hitTP  = t.isBuy ? high >= t.tp : low + spreadPx <= t.tp
+            bool hitTP1 = not na(t.tp1) and not t.part and (t.isBuy ? high >= t.tp1 : low + spreadPx <= t.tp1)
             if hitSL
-                closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, -1)
+                closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, t.part ? 2 : -1)
                 done := true
             else if hitTP
+                if hitTP1
+                    t.part  := true
+                    t.realR := tp1Frac * tp1R
                 closeTrade(S, t, t.tp, 1)
                 done := true
+            else if hitTP1
+                t.part  := true
+                t.realR := tp1Frac * tp1R
+                t.sl    := t.entry
+                // Conservative: if the same bar also traded back to entry, the remainder is out at break-even
+                if (t.isBuy ? low <= t.sl : high + spreadPx >= t.sl)
+                    closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, 2)
+                    done := true
             else if maxHold > 0 and time_close - t.openTime >= maxHold * 60000
                 closeTrade(S, t, t.isBuy ? close - slipPx : close + spreadPx + slipPx, 0)
                 done := true
         if done
             trades.remove(i)
+
+// Distance from entry to the nearest active opposing zone (HTF only when HTFs exist); 0 if entry is inside one
+oppRoom(array<Zone> zs, bool isBuy, float entry, int minRank) =>
+    float d = na
+    for z in zs
+        if not z.mitigated and z.rank >= minRank and z.bull != isBuy
+            if isBuy and z.top > entry
+                d := minNa(d, math.max(0.0, z.bot - entry))
+            if not isBuy and z.bot < entry
+                d := minNa(d, math.max(0.0, entry - z.top))
+    d
+
+// Position size in lots for the configured account risk
+lotSize(float risk) =>
+    float raw = acctSize * riskPct / 100 / (risk * lotUnits)
+    math.max(lotStep, math.floor(raw / lotStep) * lotStep)
 
 // Zone-retest model: entry / SL. Returns [entry, sl, chase]
 planRetest(bool isBuy, float far, float near, bool lim) =>
@@ -776,14 +852,19 @@ planRetest(bool isBuy, float far, float near, bool lim) =>
     float chase = isBuy ? close - near : near - close
     [entry, sl, chase]
 
-drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float risk, string info) =>
+drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float tp1, float risk, string info) =>
     color  c    = isBuy ? buyCol : sellCol
     string side = isBuy ? "BUY" : "SELL"
-    string tip  = side + (lim ? " LIMIT" : "") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) +
-         "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")" + info
+    float  lots = lotSize(risk)
+    float  rPct = lots * risk * lotUnits / acctSize * 100
+    string tp1s = na(tp1) ? "" : "\nTP1: " + fmt(tp1) + " (close " + str.tostring(tp1Pct) + "%, SL → entry)"
+    string tip  = side + (lim ? " LIMIT" : "") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + tp1s + "\nTP: " + fmt(tp) +
+         "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")" +
+         "\nLot: " + str.tostring(lots) + " (risk " + str.tostring(rPct, "#.##") + "% of " + str.tostring(acctSize) + ")" + info
     label lb = label.new(bar_index, close, side + (lim ? " LMT" : ""), yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
          textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
-    alert(syminfo.ticker + " " + side + (lim ? " LIMIT" : "") + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + " " + side + (lim ? " LIMIT" : "") + " @ " + fmt(entry) + " | SL " + fmt(sl) +
+         (na(tp1) ? "" : " | TP1 " + fmt(tp1)) + " | TP " + fmt(tp) + " | Lot " + str.tostring(lots), alert.freq_once_per_bar_close)
     lb
 
 //==============================================================================
@@ -960,10 +1041,23 @@ if candBuy or candSell
     bool   isBuy = candBuy
     float  risk  = isBuy ? cEntry - cSl : cSl - cEntry
     float  tp    = isBuy ? cEntry + rrRatio * risk : cEntry - rrRatio * risk
+    float  tp1   = partOn ? (isBuy ? cEntry + tp1R * risk : cEntry - tp1R * risk) : na
+    int    oppRk = (v1 or v2 or v3) ? 1 : 0
+    float  room  = minNa(minNa(oppRoom(zC, isBuy, cEntry, oppRk), oppRoom(zH1, isBuy, cEntry, oppRk)),
+         minNa(oppRoom(zH2, isBuy, cEntry, oppRk), oppRoom(zH3, isBuy, cEntry, oppRk)))
     string why   = ""
     if onePos and trades.size() > 0
         why    := "already in a position"
         S.fPos := S.fPos + 1
+    else if useDaily and maxDayLossR > 0 and S.dayR <= -maxDayLossR
+        why      := "daily loss limit reached (" + rStr(S.dayR) + ")"
+        S.fDaily := S.fDaily + 1
+    else if useDaily and maxLossRun > 0 and S.dayRun >= maxLossRun
+        why      := str.tostring(S.dayRun) + " losses in a row today"
+        S.fDaily := S.fDaily + 1
+    else if useDaily and maxDayTrades > 0 and S.dayTrades >= maxDayTrades
+        why      := "max trades per day reached"
+        S.fDaily := S.fDaily + 1
     else if not sessOk
         why     := "outside trading sessions"
         S.fSess := S.fSess + 1
@@ -982,20 +1076,27 @@ if candBuy or candSell
     else if not cLim and maxChase > 0 and cChase > maxChase * risk
         why      := "price already ran " + str.tostring(cChase / risk, "#.##") + "R from the entry zone"
         S.fChase := S.fChase + 1
+    else if minRoomR > 0 and not na(room) and room < minRoomR * risk
+        why     := "opposing HTF zone only " + str.tostring(room / risk, "#.##") + "R away"
+        S.fRoom := S.fRoom + 1
     if why == ""
         buySig  := isBuy
         sellSig := not isBuy
         lastSig := time
-        S.taken := S.taken + 1
-        label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, risk, cInfo)
-        trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk))
+        S.taken     := S.taken + 1
+        S.dayTrades := S.dayTrades + 1
+        label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, tp1, risk, cInfo)
+        trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk, tp1))
         if showSLTP
             line.delete(slLine)
             line.delete(tpLine)
+            line.delete(tp1Line)
             line.delete(enLine)
             enLine := line.new(bar_index, cEntry, bar_index + 20, cEntry, color = chart.fg_color, style = line.style_dotted)
             slLine := line.new(bar_index, cSl, bar_index + 20, cSl, color = sellCol, width = 2)
             tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
+            if not na(tp1)
+                tp1Line := line.new(bar_index, tp1, bar_index + 20, tp1, color = buyCol, style = line.style_dashed)
     else if showSkipped
         label.new(bar_index, close, "×", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = color(na), textcolor = color.gray,
              style = label.style_none, size = size.normal, tooltip = (isBuy ? "BUY" : "SELL") + " skipped: " + why + cInfo)
@@ -1037,19 +1138,17 @@ statRow(table t, int row, string k, string v, color c) =>
     t.cell(0, row, k, text_color = chart.fg_color, text_size = size.small, text_halign = text.align_left)
     t.cell(1, row, v, text_color = c, text_size = size.small, text_halign = text.align_right)
 
-rStr(float r) => (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + " R"
-
 sideStat(int n, int w, float r) =>
     n > 0 ? str.tostring(n) + " · " + str.tostring(100.0 * w / n, "#") + "% · " + rStr(r) : "-"
 
 topFilter(Stats s) =>
-    array<int>    v = array.from(s.fSess, s.fNews, s.fVol, s.fSlMin, s.fSlMax, s.fChase, s.fPos, s.fTrend, s.fPD, s.fCool)
-    array<string> k = array.from("session", "news", "volatility", "SL too small", "SL too wide", "chase", "in position", "trend", "P/D", "cooldown")
+    array<int>    v = array.from(s.fSess, s.fNews, s.fVol, s.fSlMin, s.fSlMax, s.fChase, s.fPos, s.fTrend, s.fPD, s.fCool, s.fDaily, s.fRoom)
+    array<string> k = array.from("session", "news", "volatility", "SL too small", "SL too wide", "chase", "in position", "trend", "P/D", "cooldown", "daily limit", "opposing zone")
     int best = int(v.max())
     best > 0 ? k.get(v.indexof(best)) + " " + str.tostring(best) : "-"
 
 if showStats and showSig and barstate.islast
-    var table st = table.new(posOf(statsPos), 2, statsCompact ? 11 : 18, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table st = table.new(posOf(statsPos), 2, statsCompact ? 11 : 19, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
     int   closed = S.tp + S.sl + S.tm
     int   wins   = S.bW + S.sW
@@ -1063,10 +1162,10 @@ if showStats and showSig and barstate.islast
     st.cell(0, 0, "Backtest · " + model + " · after costs · R:R 1:" + str.tostring(rrRatio), text_color = fg, text_size = size.small)
     st.merge_cells(0, 0, 1, 0)
     statRow(st, 1, "Trades (closed / open)", str.tostring(closed) + " / " + str.tostring(trades.size()), fg)
-    statRow(st, 2, "TP / SL / Time stop", str.tostring(S.tp) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
+    statRow(st, 2, "TP / BE / SL / Time", str.tostring(S.tp) + " / " + str.tostring(S.be) + " / " + str.tostring(S.sl) + " / " + str.tostring(S.tm), fg)
     statRow(st, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", fg)
     statRow(st, 4, "Expectancy / trade", na(expR) ? "-" : rStr(expR), na(expR) ? fg : expR > 0 ? good : bad)
-    statRow(st, 5, "Net result", rStr(S.sumR), S.sumR >= 0 ? good : bad)
+    statRow(st, 5, "Net result", rStr(S.sumR) + " ≈ $" + str.tostring(S.sumR * acctSize * riskPct / 100, "#,##0"), S.sumR >= 0 ? good : bad)
     statRow(st, 6, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
     statRow(st, 7, "Max drawdown", "-" + str.tostring(S.maxDD, "#.#") + " R", fg)
     statRow(st, 8, "Avg SL / hold", closed > 0 ? fmt(S.sumRisk / closed) + " / " + str.tostring(S.sumHold / closed, "#") + " min" : "-", fg)
@@ -1083,6 +1182,7 @@ if showStats and showSig and barstate.islast
         statRow(st, 16, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
              " · in pos " + str.tostring(S.fPos) + " · unfilled " + str.tostring(S.miss), fg)
         statRow(st, 17, "Filtered: bias", "trend " + str.tostring(S.fTrend) + " · P/D " + str.tostring(S.fPD) + " · cooldown " + str.tostring(S.fCool), fg)
+        statRow(st, 18, "Filtered: risk", "daily limit " + str.tostring(S.fDaily) + " · opposing zone " + str.tostring(S.fRoom), fg)
 
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
