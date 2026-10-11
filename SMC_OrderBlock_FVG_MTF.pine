@@ -60,7 +60,11 @@ bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
 string sigFilter   = input.string("HTF trend", "Trend filter", options = ["HTF trend", "Chart trend", "Both", "None"], group = G_SIG,
      tooltip = "HTF trend = BUY เฉพาะเมื่อเทรนด์ของ HTF ที่สูงที่สุดที่เปิดอยู่เป็นขาขึ้น (SELL กลับกัน)\nChart trend = ใช้เทรนด์ TF กราฟ\nBoth = ต้องตรงกันทั้งคู่\nNone = ไม่กรอง")
 string sigZones    = input.string("OB + FVG", "Signal zones", options = ["OB + FVG", "OB only", "FVG only"], inline = "sz", group = G_SIG)
-string sigZoneTF   = input.string("All TF", "", options = ["All TF", "HTF only"], inline = "sz", group = G_SIG)
+string sigZoneTF   = input.string("HTF only", "", options = ["All TF", "HTF only"], inline = "sz", group = G_SIG,
+     tooltip = "HTF only = ใช้เฉพาะโซนของ HTF (สัญญาณน้อยแต่คุณภาพดีกว่า) ถ้าไม่มี HTF ที่สูงกว่ากราฟจะใช้โซนของกราฟแทน")
+bool   usePD       = input.bool(true, "Premium / Discount filter", inline = "pd", group = G_SIG,
+     tooltip = "BUY เฉพาะเมื่อราคาอยู่ครึ่งล่าง (Discount) ของกรอบราคา HTF, SELL เฉพาะครึ่งบน (Premium)\nกรอบราคา = High/Low สูงสุด-ต่ำสุดของ N แท่งล่าสุดบน TF ที่ใช้กรองเทรนด์")
+int    pdLen       = input.int(50, "Bars", minval = 10, maxval = 500, inline = "pd", group = G_SIG)
 float  sigDepart   = input.float(1.0, "Min move away before retest (x ATR)", minval = 0, step = 0.25, group = G_SIG,
      tooltip = "ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ (เทียบ ATR) ก่อน แล้วค่อยย้อนกลับมาแตะ จึงนับเป็นสัญญาณ\nกันสัญญาณหลอกจากโซนที่เพิ่งเกิดหรือราคายังวนอยู่ในโซน")
 int    sigCooldown = input.int(120, "Min minutes between signals", minval = 0, step = 15, group = G_SIG,
@@ -326,12 +330,11 @@ htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
 
 // BUY: wick into a bullish zone, bullish candle closes back above it (SELL mirrored).
 // Returns [buy, buy zone bottom, sell, sell zone top]; a zone fires only once.
-scanSignals(array<Zone> zs, bool allowBuy, bool allowSell) =>
+scanSignals(array<Zone> zs, bool allowBuy, bool allowSell, int minRank) =>
     bool  buy  = false
     bool  sell = false
     float bBot = na
     float sTop = na
-    int   minRank = sigZoneTF == "HTF only" ? 1 : 0
     for z in zs
         bool typeOk = sigZones == "OB + FVG" or (sigZones == "OB only") == z.isOB
         if not z.mitigated and not z.signaled and z.departed and bar_index > z.born and z.rank >= minRank and typeOk
@@ -435,19 +438,27 @@ string chartTag = tfName(timeframe.period)
 // BUY / SELL SIGNALS
 //==============================================================================
 int   htfBias = v3 ? t3 : v2 ? t2 : v1 ? t1 : cTrend
+int   sigMinRank = sigZoneTF == "HTF only" and (v1 or v2 or v3) ? 1 : 0
+
+// Premium / Discount of the bias timeframe's recent range (confirmed bars only)
+string biasTF = v3 ? tf3 : v2 ? tf2 : v1 ? tf1 : timeframe.period
+[pdHi, pdLo] = request.security(syminfo.tickerid, biasTF, [ta.highest(high, pdLen)[1], ta.lowest(low, pdLen)[1]], lookahead = barmerge.lookahead_on)
+float pdMid   = (pdHi + pdLo) / 2
+bool  pdBuy   = not usePD or na(pdMid) or close < pdMid
+bool  pdSell  = not usePD or na(pdMid) or close > pdMid
 bool  biasBuy  = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias > 0) or
      (sigFilter == "Chart trend" and cTrend > 0) or (sigFilter == "Both" and htfBias > 0 and cTrend > 0)
 bool  biasSell = sigFilter == "None" or (sigFilter == "HTF trend" and htfBias < 0) or
      (sigFilter == "Chart trend" and cTrend < 0) or (sigFilter == "Both" and htfBias < 0 and cTrend < 0)
 var int lastSig = na
 bool  coolOk   = na(lastSig) or time - lastSig >= sigCooldown * 60000
-bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy
-bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell
+bool  canBuy   = showSig and barstate.isconfirmed and coolOk and biasBuy and pdBuy
+bool  canSell  = showSig and barstate.isconfirmed and coolOk and biasSell and pdSell
 
-[sb0, sbb0, ss0, sst0] = scanSignals(zC, canBuy, canSell)
-[sb1, sbb1, ss1, sst1] = scanSignals(zH1, canBuy, canSell)
-[sb2, sbb2, ss2, sst2] = scanSignals(zH2, canBuy, canSell)
-[sb3, sbb3, ss3, sst3] = scanSignals(zH3, canBuy, canSell)
+[sb0, sbb0, ss0, sst0] = scanSignals(zC, canBuy, canSell, sigMinRank)
+[sb1, sbb1, ss1, sst1] = scanSignals(zH1, canBuy, canSell, sigMinRank)
+[sb2, sbb2, ss2, sst2] = scanSignals(zH2, canBuy, canSell, sigMinRank)
+[sb3, sbb3, ss3, sst3] = scanSignals(zH3, canBuy, canSell, sigMinRank)
 bool  buySig  = sb0 or sb1 or sb2 or sb3
 bool  sellSig = ss0 or ss1 or ss2 or ss3
 // Conflicting signals on the same bar cancel each other

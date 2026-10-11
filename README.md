@@ -47,7 +47,8 @@
 | Label size | ขนาดตัวอักษรป้ายโซน |
 | BOS / CHoCH | `All` / `CHoCH only` / `None` |
 | Trend filter | `HTF trend` (ค่าเริ่มต้น) = BUY เฉพาะเมื่อ HTF สูงสุดที่เปิดอยู่เป็นขาขึ้น, `Chart trend`, `Both`, `None` |
-| Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `All TF` / `HTF only`) |
+| Signal zones | ใช้โซนไหนออกสัญญาณ (`OB + FVG` / `OB only` / `FVG only`, `HTF only` (ค่าเริ่มต้น) / `All TF`) |
+| Premium / Discount filter | BUY เฉพาะครึ่งล่างของกรอบราคา HTF (N แท่งล่าสุด), SELL เฉพาะครึ่งบน |
 | Min move away before retest (x ATR) | ราคาต้องวิ่งออกจากโซนอย่างน้อยเท่านี้ก่อน แล้วย้อนกลับมาแตะ จึงนับเป็นสัญญาณ (ค่าเริ่มต้น 1 ATR) |
 | Min minutes between signals | ระยะเวลาขั้นต่ำระหว่างสัญญาณ เป็นนาที (ค่าเริ่มต้น 120) |
 | R:R | อัตราส่วน TP ต่อ SL |
