@@ -12,19 +12,24 @@ const string G_DISP = "Display (ลดความรก)"
 const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
+const string G_ALRT = "Alerts (phone notifications)"
 const string G_LIQ  = "Liquidity"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
-bool   autoHTF     = input.bool(true, "Auto HTF (by chart TF)", group = G_TF,
-     tooltip = "เลือก HTF ให้อัตโนมัติตาม TF ของกราฟ (ไม่ใช้ค่า HTF 1/2/3 ด้านล่าง)\n1m → 5m / 15m / 1H\n3m–5m → 15m / 1H / 4H\n15m → 1H / 4H / D\n1H → 4H / D / W")
+string tfMode      = input.string("5m · 15m · 1H · 4H · 1D", "HTF set", options = ["5m · 15m · 1H · 4H · 1D", "Auto by chart TF", "Manual"], group = G_TF,
+     tooltip = "5m · 15m · 1H · 4H · 1D = ใช้ชุด TF นี้เสมอ (TF ที่ต่ำกว่าหรือเท่ากับกราฟใช้โซนของกราฟแทน) เปิดกราฟ 5m จะครบทั้ง 5 TF\nAuto by chart TF = 1m → 5m/15m/1H, 3m–5m → 15m/1H/4H, 15m → 1H/4H/D, 1H → 4H/D/W\nManual = ใช้ HTF 1–5 ด้านล่าง")
 bool   useTF1      = input.bool(true, "HTF 1", inline = "tf1", group = G_TF)
-string tf1         = input.timeframe("15", "", inline = "tf1", group = G_TF)
+string tf1         = input.timeframe("5", "", inline = "tf1", group = G_TF)
 bool   useTF2      = input.bool(true, "HTF 2", inline = "tf2", group = G_TF)
-string tf2         = input.timeframe("60", "", inline = "tf2", group = G_TF)
+string tf2         = input.timeframe("15", "", inline = "tf2", group = G_TF)
 bool   useTF3      = input.bool(true, "HTF 3", inline = "tf3", group = G_TF)
-string tf3         = input.timeframe("240", "", inline = "tf3", group = G_TF,
-     tooltip = "HTF ที่ต่ำกว่าหรือเท่ากับ TF ของกราฟจะไม่แสดง เช่น เปิดกราฟ 15m จะใช้ 1H และ 4H\nสำหรับ scalping แนะนำเปิดกราฟ 3m หรือ 5m แล้วใช้ 15m / 1H / 4H เป็นโซน")
+string tf3         = input.timeframe("60", "", inline = "tf3", group = G_TF)
+bool   useTF4      = input.bool(true, "HTF 4", inline = "tf4", group = G_TF)
+string tf4         = input.timeframe("240", "", inline = "tf4", group = G_TF)
+bool   useTF5      = input.bool(true, "HTF 5", inline = "tf5", group = G_TF)
+string tf5         = input.timeframe("D", "", inline = "tf5", group = G_TF,
+     tooltip = "ใช้เมื่อ HTF set = Manual (เรียงจาก TF เล็กไปใหญ่) HTF ที่ต่ำกว่าหรือเท่ากับ TF ของกราฟจะไม่ใช้")
 int    swingLen    = input.int(5, "Swing length", minval = 2, maxval = 50, group = G_TF,
      tooltip = "จำนวนแท่งซ้าย/ขวาที่ใช้หา Swing High/Low สำหรับ Market Structure และ Order Block")
 
@@ -73,17 +78,37 @@ int    eqLen       = input.int(5, "EQ swing length", minval = 2, maxval = 20, in
 int    maxEq       = input.int(6, "max EQ levels", minval = 1, maxval = 30, inline = "eq2", group = G_LIQ)
 color  liqCol      = input.color(#ab47bc, "Liquidity color", group = G_LIQ)
 
+bool   alEnter     = input.bool(true, "Price enters an OB / FVG zone", group = G_ALRT,
+     tooltip = "แจ้งเตือนครั้งแรกที่ราคาเข้าโซน (ครั้งเดียวต่อโซน) ระบุ TF, ประเภท และช่วงราคาของโซน\nตั้ง Alert: Condition = SignalTW → Any alert() function call แล้วเปิด Notify in app\nต้องสร้าง Alert บนกราฟ 5m (หรือเล็กกว่า) จึงจะได้โซน 5m ด้วย")
+bool   al5         = input.bool(true, "5m", inline = "altf", group = G_ALRT)
+bool   al15        = input.bool(true, "15m", inline = "altf", group = G_ALRT)
+bool   al60        = input.bool(true, "1H", inline = "altf", group = G_ALRT)
+bool   al240       = input.bool(true, "4H", inline = "altf", group = G_ALRT)
+bool   alD         = input.bool(true, "1D", inline = "altf", group = G_ALRT)
+bool   alOB        = input.bool(true, "OB", inline = "alty", group = G_ALRT)
+bool   alFVG       = input.bool(true, "FVG", inline = "alty", group = G_ALRT)
+bool   alNew       = input.bool(false, "New OB / FVG formed", group = G_ALRT)
+bool   alMS        = input.bool(false, "CHoCH / BOS", group = G_ALRT)
+bool   alLiq       = input.bool(false, "Liquidity sweep", group = G_ALRT,
+     tooltip = "แจ้งเตือนประเภทอื่นที่ส่งผ่าน Any alert() function call (ค่าเริ่มต้นปิด เพื่อไม่ให้แจ้งเตือนถี่เกินไป)")
+
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
 
-// Effective HTFs (auto by chart TF, or manual)
-int    chartS = timeframe.in_seconds(timeframe.period)
-string eTf1   = autoHTF ? (chartS <= 60 ? "5" : chartS <= 300 ? "15" : chartS <= 900 ? "60" : chartS <= 3600 ? "240" : "D") : tf1
-string eTf2   = autoHTF ? (chartS <= 60 ? "15" : chartS <= 300 ? "60" : chartS <= 900 ? "240" : chartS <= 3600 ? "D" : "W") : tf2
-string eTf3   = autoHTF ? (chartS <= 60 ? "60" : chartS <= 300 ? "240" : chartS <= 900 ? "D" : chartS <= 3600 ? "W" : "M") : tf3
-bool   eUse1  = autoHTF or useTF1
-bool   eUse2  = autoHTF or useTF2
-bool   eUse3  = autoHTF or useTF3
+// Effective HTFs (fixed set, auto by chart TF, or manual)
+int    chartS   = timeframe.in_seconds(timeframe.period)
+bool   fixedSet = tfMode == "5m · 15m · 1H · 4H · 1D"
+bool   autoSet  = tfMode == "Auto by chart TF"
+string eTf1     = fixedSet ? "5" : autoSet ? (chartS <= 60 ? "5" : chartS <= 300 ? "15" : chartS <= 900 ? "60" : chartS <= 3600 ? "240" : "D") : tf1
+string eTf2     = fixedSet ? "15" : autoSet ? (chartS <= 60 ? "15" : chartS <= 300 ? "60" : chartS <= 900 ? "240" : chartS <= 3600 ? "D" : "W") : tf2
+string eTf3     = fixedSet ? "60" : autoSet ? (chartS <= 60 ? "60" : chartS <= 300 ? "240" : chartS <= 900 ? "D" : chartS <= 3600 ? "W" : "M") : tf3
+string eTf4     = fixedSet ? "240" : tf4
+string eTf5     = fixedSet ? "D" : tf5
+bool   eUse1    = fixedSet or autoSet or useTF1
+bool   eUse2    = fixedSet or autoSet or useTF2
+bool   eUse3    = fixedSet or autoSet or useTF3
+bool   eUse4    = fixedSet or (not autoSet and useTF4)
+bool   eUse5    = fixedSet or (not autoSet and useTF5)
 
 float  atrC    = ta.atr(14)
 string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
@@ -103,7 +128,9 @@ type Zone
     string tag         // timeframe name, e.g. "4H"
     string lbl         // base label text, e.g. "OB 4H"
     int    born        // chart bar_index when the zone was drawn
+    int    tfSec       // timeframe of the zone in seconds (for alerts)
     bool   mitigated = false
+    bool   entered   = false   // price has traded into the zone at least once
 
 //==============================================================================
 // DETECTION (runs on any timeframe, also inside request.security)
@@ -227,7 +254,7 @@ tfName(simple string tf) =>
 
 sameKind(Zone a, bool bull, bool isOB) => a.bull == bull and a.isOB == isOB
 
-addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color c, int rank, string tag, int maxN) =>
+addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color c, int rank, string tag, int maxN, int tfSec) =>
     float nTop  = top
     float nBot  = bot
     int   nLeft = t
@@ -249,7 +276,7 @@ addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color
          border_color = color.new(c, 30), border_style = rank > 0 ? line.style_dashed : line.style_solid,
          bgcolor = c, text = lbl, text_size = lblSize, text_color = color.new(c, 0),
          text_halign = text.align_right, text_valign = rank > 0 ? text.align_top : text.align_bottom)
-    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl, bar_index))
+    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl, bar_index, tfSec))
     // Keep at most maxN zones of this kind (newest first)
     array<int> drop = array.new<int>()
     int cnt = 0
@@ -264,10 +291,8 @@ addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color
             Zone old = zs.remove(drop.get(j))
             old.bx.delete()
 
-// Mitigation check. Returns [bullTouch, bearTouch] for zones price is currently trading inside
+// Mitigation check (confirmed bars)
 updateZones(array<Zone> zs) =>
-    bool bullTouch = false
-    bool bearTouch = false
     int n = zs.size()
     if n > 0
         for i = n - 1 to 0
@@ -287,17 +312,30 @@ updateZones(array<Zone> zs) =>
                         z.bx.set_bgcolor(color.new(chart.fg_color, 92))
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
-                else if high >= z.bot and low <= z.top
-                    if z.bull
-                        bullTouch := true
-                    else
-                        bearTouch := true
-    [bullTouch, bearTouch]
 
 fmt(float p) => str.tostring(p, format.mintick)
 
+tfOk(int sec) => (sec == 300 and al5) or (sec == 900 and al15) or (sec == 3600 and al60) or (sec == 14400 and al240) or (sec == 86400 and alD)
+
+// First time price trades into a zone (once per zone, also intrabar on realtime bars).
+// Returns [bullish entered, bearish entered, alert text] for the alert-enabled TFs and zone types.
+checkEntry(array<Zone> zs) =>
+    bool   bIn = false
+    bool   sIn = false
+    string msg = ""
+    for z in zs
+        if not z.mitigated and not z.entered and bar_index > z.born and high >= z.bot and low <= z.top
+            z.entered := true
+            if tfOk(z.tfSec) and (z.isOB ? alOB : alFVG)
+                bIn := bIn or z.bull
+                sIn := sIn or not z.bull
+                msg := msg + (msg == "" ? "" : " | ") + (z.bull ? "Bullish " : "Bearish ") + (z.isOB ? "OB " : "FVG ") + z.tag + " " + fmt(z.bot) + "–" + fmt(z.top)
+    [bIn, sIn, msg]
+
+joinMsg(string a, string b) => a == "" ? b : b == "" ? a : a + " | " + b
+
 // Creates zones for one timeframe, returns [newBullOB, newBearOB, newBullFVG, newBearFVG]
-handleZones(bool isNew, int rank, string tag, array<Zone> zs,
+handleZones(bool isNew, int rank, string tag, int tfSec, array<Zone> zs,
      bool a1, float a2, float a3, int a4, bool b1, float b2, float b3, int b4,
      bool c1, float c2, float c3, int c4, bool d1, float d2, float d3, int d4) =>
     string sfx = " " + tag
@@ -306,17 +344,21 @@ handleZones(bool isNew, int rank, string tag, array<Zone> zs,
     bool nbF  = isNew and showFVG and c1
     bool nsF  = isNew and showFVG and d1
     if nbOB
-        addZone(zs, a2, a3, a4, true, true, bullOBCol, rank, tag, maxOB)
-        alert(syminfo.ticker + " Bullish OB" + sfx + " : " + fmt(a3) + " - " + fmt(a2), alert.freq_once_per_bar)
+        addZone(zs, a2, a3, a4, true, true, bullOBCol, rank, tag, maxOB, tfSec)
+        if alNew
+            alert(syminfo.ticker + " Bullish OB" + sfx + " : " + fmt(a3) + " - " + fmt(a2), alert.freq_once_per_bar)
     if nsOB
-        addZone(zs, b2, b3, b4, false, true, bearOBCol, rank, tag, maxOB)
-        alert(syminfo.ticker + " Bearish OB" + sfx + " : " + fmt(b3) + " - " + fmt(b2), alert.freq_once_per_bar)
+        addZone(zs, b2, b3, b4, false, true, bearOBCol, rank, tag, maxOB, tfSec)
+        if alNew
+            alert(syminfo.ticker + " Bearish OB" + sfx + " : " + fmt(b3) + " - " + fmt(b2), alert.freq_once_per_bar)
     if nbF
-        addZone(zs, c2, c3, c4, true, false, bullFVGCol, rank, tag, maxFVG)
-        alert(syminfo.ticker + " Bullish FVG" + sfx + " : " + fmt(c3) + " - " + fmt(c2), alert.freq_once_per_bar)
+        addZone(zs, c2, c3, c4, true, false, bullFVGCol, rank, tag, maxFVG, tfSec)
+        if alNew
+            alert(syminfo.ticker + " Bullish FVG" + sfx + " : " + fmt(c3) + " - " + fmt(c2), alert.freq_once_per_bar)
     if nsF
-        addZone(zs, d2, d3, d4, false, false, bearFVGCol, rank, tag, maxFVG)
-        alert(syminfo.ticker + " Bearish FVG" + sfx + " : " + fmt(d3) + " - " + fmt(d2), alert.freq_once_per_bar)
+        addZone(zs, d2, d3, d4, false, false, bearFVGCol, rank, tag, maxFVG, tfSec)
+        if alNew
+            alert(syminfo.ticker + " Bearish FVG" + sfx + " : " + fmt(d3) + " - " + fmt(d2), alert.freq_once_per_bar)
     [nbOB, nsOB, nbF, nsF]
 
 // Higher-timeframe slot (non-repainting: only confirmed HTF bars are used)
@@ -327,7 +369,7 @@ htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
          request.security(syminfo.tickerid, tf, detectConfirmed(swingLen, fvgMinPct), lookahead = barmerge.lookahead_on)
     bool valid = use and timeframe.in_seconds(tf) > chartSec
     bool isNew = valid and timeframe.change(tf)
-    [nb, ns, nbf, nsf] = handleZones(isNew, rank, tfName(tf), zs,
+    [nb, ns, nbf, nsf] = handleZones(isNew, rank, tfName(tf), timeframe.in_seconds(tf), zs,
          a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4)
     [valid, t, nb or nbf, ns or nsf]
 
@@ -338,6 +380,8 @@ var array<Zone> zC  = array.new<Zone>()
 var array<Zone> zH1 = array.new<Zone>()
 var array<Zone> zH2 = array.new<Zone>()
 var array<Zone> zH3 = array.new<Zone>()
+var array<Zone> zH4 = array.new<Zone>()
+var array<Zone> zH5 = array.new<Zone>()
 
 //==============================================================================
 // DISPLAY FILTER (nearest zones + higher-TF priority)
@@ -359,6 +403,8 @@ refreshDisplay() =>
     collect(zH1, pool)
     collect(zH2, pool)
     collect(zH3, pool)
+    collect(zH4, pool)
+    collect(zH5, pool)
     int n = pool.size()
     if n > 0
         array<bool>   hid   = array.new<bool>(n, false)
@@ -395,27 +441,40 @@ refreshDisplay() =>
 //==============================================================================
 // MAIN
 //==============================================================================
-// Mitigation / touch checks first, so zones created on this bar are not mitigated by the same bar
-bool bullTouch = false
-bool bearTouch = false
+// Mitigation checks first, so zones created on this bar are not mitigated by the same bar
 if barstate.isconfirmed
-    [bt0, st0] = updateZones(zC)
-    [bt1, st1] = updateZones(zH1)
-    [bt2, st2] = updateZones(zH2)
-    [bt3, st3] = updateZones(zH3)
-    bullTouch := bt0 or bt1 or bt2 or bt3
-    bearTouch := st0 or st1 or st2 or st3
+    updateZones(zC)
+    updateZones(zH1)
+    updateZones(zH2)
+    updateZones(zH3)
+    updateZones(zH4)
+    updateZones(zH5)
 
 // Chart timeframe
 string chartTag = tfName(timeframe.period)
 [ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, cms, cmsLvl, cmsX, cTrend] = detect(swingLen, fvgMinPct)
-[cnb, cns, cnbf, cnsf] = handleZones(showChartTF and barstate.isconfirmed, 0, chartTag, zC,
+[cnb, cns, cnbf, cnsf] = handleZones(showChartTF and barstate.isconfirmed, 0, chartTag, chartSec, zC,
      ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4)
 
 // Higher timeframes
 [v1, t1, nBull1, nBear1] = htfSlot(eTf1, eUse1, zH1, 1)
 [v2, t2, nBull2, nBear2] = htfSlot(eTf2, eUse2, zH2, 2)
 [v3, t3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
+[v4, t4, nBull4, nBear4] = htfSlot(eTf4, eUse4, zH4, 4)
+[v5, t5, nBull5, nBear5] = htfSlot(eTf5, eUse5, zH5, 5)
+
+// Price entering a zone (every tick on realtime bars -> notification as soon as price reaches the zone)
+[eb0, es0, em0] = checkEntry(zC)
+[eb1, es1, em1] = checkEntry(zH1)
+[eb2, es2, em2] = checkEntry(zH2)
+[eb3, es3, em3] = checkEntry(zH3)
+[eb4, es4, em4] = checkEntry(zH4)
+[eb5, es5, em5] = checkEntry(zH5)
+bool   enterBull = eb0 or eb1 or eb2 or eb3 or eb4 or eb5
+bool   enterBear = es0 or es1 or es2 or es3 or es4 or es5
+string enterMsg  = joinMsg(joinMsg(joinMsg(em0, em1), joinMsg(em2, em3)), joinMsg(em4, em5))
+if alEnter and enterMsg != ""
+    alert(syminfo.ticker + " " + fmt(close) + " entered " + enterMsg, alert.freq_once_per_bar)
 
 //==============================================================================
 // LIQUIDITY (PDH/PDL, PWH/PWL, Asia range, equal highs / lows) + sweep markers
@@ -583,11 +642,13 @@ if liqOn and barstate.isconfirmed
     if bslHit != ""
         label.new(bar_index, high, "$", yloc = yloc.abovebar, style = label.style_none, textcolor = liqCol, size = size.small,
              tooltip = "Buy-side liquidity swept: " + bslHit)
-        alert(syminfo.ticker + " swept buy-side liquidity (" + bslHit + ") @ " + fmt(high), alert.freq_once_per_bar_close)
+        if alLiq
+            alert(syminfo.ticker + " swept buy-side liquidity (" + bslHit + ") @ " + fmt(high), alert.freq_once_per_bar_close)
     if sslHit != ""
         label.new(bar_index, low, "$", yloc = yloc.belowbar, style = label.style_none, textcolor = liqCol, size = size.small,
              tooltip = "Sell-side liquidity swept: " + sslHit)
-        alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
+        if alLiq
+            alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
 
 if barstate.islast
     refreshDisplay()
@@ -603,17 +664,18 @@ if msShow and barstate.isconfirmed
     line.new(cmsX, cmsLvl, time, cmsLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed)
     label.new(int(math.avg(cmsX, time)), cmsLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
          style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.tiny)
-    alert(syminfo.ticker + " " + (cms > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(cmsLvl), alert.freq_once_per_bar)
+    if alMS
+        alert(syminfo.ticker + " " + (cms > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(cmsLvl), alert.freq_once_per_bar)
 
 //==============================================================================
 // ALERT CONDITIONS
 //==============================================================================
-bool anyBull = cnb or cnbf or nBull1 or nBull2 or nBull3
-bool anyBear = cns or cnsf or nBear1 or nBear2 or nBear3
+bool anyBull = cnb or cnbf or nBull1 or nBull2 or nBull3 or nBull4 or nBull5
+bool anyBear = cns or cnsf or nBear1 or nBear2 or nBear3 or nBear4 or nBear5
 alertcondition(anyBull, "New Bullish OB/FVG (any TF)", "{{ticker}} new Bullish Order Block / FVG")
 alertcondition(anyBear, "New Bearish OB/FVG (any TF)", "{{ticker}} new Bearish Order Block / FVG")
-alertcondition(bullTouch, "Price in Bullish zone", "{{ticker}} price entered Bullish OB/FVG zone @ {{close}}")
-alertcondition(bearTouch, "Price in Bearish zone", "{{ticker}} price entered Bearish OB/FVG zone @ {{close}}")
+alertcondition(enterBull, "Price entered Bullish OB/FVG", "{{ticker}} price entered a Bullish OB/FVG zone @ {{close}}")
+alertcondition(enterBear, "Price entered Bearish OB/FVG", "{{ticker}} price entered a Bearish OB/FVG zone @ {{close}}")
 alertcondition(bslHit != "", "Buy-side liquidity swept", "{{ticker}} swept buy-side liquidity (highs) @ {{high}}")
 alertcondition(sslHit != "", "Sell-side liquidity swept", "{{ticker}} swept sell-side liquidity (lows) @ {{low}}")
 alertcondition(msShow and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
@@ -631,9 +693,9 @@ trendCell(table tb, int row, string name, int tr) =>
 if showDash and barstate.islast
     string p = dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Right" ? position.bottom_right :
          dashPos == "Top Left" ? position.top_left : position.bottom_left
-    var table tb = table.new(p, 2, 5, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    var table tb = table.new(p, 2, 7, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
-    tb.clear(0, 0, 1, 4)
+    tb.clear(0, 0, 1, 6)
     tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
     tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
     int row = 1
@@ -647,3 +709,9 @@ if showDash and barstate.islast
     if v3
         row += 1
         trendCell(tb, row, tfName(eTf3), t3)
+    if v4
+        row += 1
+        trendCell(tb, row, tfName(eTf4), t4)
+    if v5
+        row += 1
+        trendCell(tb, row, tfName(eTf5), t5)
