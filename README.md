@@ -17,6 +17,7 @@
 | **Backtest (หลังหักต้นทุน)** | ทดสอบย้อนหลังบนข้อมูลที่โหลดในกราฟ โดยคิด spread + slippage, ถือได้ทีละออเดอร์, มี time stop ป้ายสัญญาณจะเปลี่ยนเป็น `BUY ✔ +1.9R` / `BUY ✘ -1.1R` / `BUY ⏱ +0.3R` |
 | **Session / News / Volatility** | เข้าเทรดเฉพาะช่วง London / New York, ไม่เข้าช่วง rollover, ช่วงประกาศข่าว 08:30 NY และข่าวที่ใส่เอง, ไม่เข้าเมื่อ ATR ต่ำหรือสูงผิดปกติ |
 | **SL / Entry** | SL ใต้ไส้เทียนที่กวาด liquidity + buffer ที่คิด spread, ข้ามเทรดที่ SL แคบหรือกว้างเกิน หรือราคาวิ่งไปไกลแล้ว, เลือกเข้าแบบ Market หรือ Limit ที่ขอบโซนได้ |
+| **Liquidity** | แนว liquidity: PDH/PDL, PWH/PWL, Asia High/Low, Equal Highs/Lows (EQH/EQL) และเครื่องหมาย `$` เมื่อถูกกวาด (ไส้ทะลุแล้วปิดกลับ) สัญญาณที่กวาดแนวสำคัญจะมี `$` ในป้าย เช่น `BUY $` |
 | **Dashboard** | ตารางแสดงเทรนด์ของแต่ละ TF |
 | **Alerts** | แจ้งเตือนเมื่อเกิด OB/FVG ใหม่, ราคาเข้าโซน, เกิด BOS/CHoCH |
 
@@ -38,7 +39,7 @@
 
 - กด **Create Alert** → Condition เลือก `SignalTW OB/FVG`
   - เลือก **Any alert() function call** เพื่อรับข้อความละเอียด (ระบุ TF และช่วงราคาของโซน)
-  - หรือเลือกเงื่อนไขเฉพาะ เช่น `BUY signal`, `SELL signal`, `New Bullish OB/FVG (any TF)`, `Price in Bullish zone`, `Bullish BOS/CHoCH`
+  - หรือเลือกเงื่อนไขเฉพาะ เช่น `BUY signal`, `SELL signal`, `Buy-side liquidity swept`, `Sell-side liquidity swept`, `New Bullish OB/FVG (any TF)`, `Price in Bullish zone`, `Bullish BOS/CHoCH`
 
 ## การตั้งค่าที่สำคัญ
 
@@ -146,6 +147,21 @@
 | Risk per trade (%) | 0.5% | lot = (ทุน × %) ÷ (ระยะ SL × หน่วยต่อ lot) แสดงในป้ายสัญญาณ (ชี้เมาส์) และข้อความ Alert |
 | Units per 1.0 lot / lot step | 100 / 0.01 | XAUUSD 1 lot = 100 oz |
 | Daily limits | เปิด | หยุดรับสัญญาณใหม่ในวันนั้นเมื่อขาดทุนถึง **−2R**, แพ้ติดกัน **3 ครั้ง** หรือเทรดครบ **8 ครั้ง** (วันเทรดของโบรกเกอร์) |
+
+## Liquidity
+
+แนวที่มี stop order กองอยู่ ราคามักวิ่งไปกวาดก่อนกลับตัว (เฉพาะกราฟ intraday)
+
+| แนว | ความหมาย | ค่าเริ่มต้น |
+|---|---|---|
+| **PDH / PDL** | High / Low ของวันก่อนหน้า | เปิด |
+| **PWH / PWL** | High / Low ของสัปดาห์ก่อนหน้า | ปิด |
+| **Asia H / Asia L** | High / Low ของ Asian session 00:00–07:00 UTC (07:00–14:00 ไทย) มักถูกกวาดตอน London เปิด | เปิด |
+| **EQH / EQL** | Swing high / low 2 จุดที่เท่ากัน (ห่างกันไม่เกิน 0.1 ATR) จุดที่ stop กองรวมกัน | เปิด (สูงสุด 6 เส้น) |
+
+- เส้นจะหยุดเมื่อราคาผ่าน: **swept** = ไส้ทะลุแล้วปิดกลับ (กวาด liquidity) มี `$` ที่แท่งนั้น (ชี้เมาส์ดูชื่อแนว), **taken** = ปิดทะลุไปเลย
+- BUY / SELL ที่กวาดแนวสำคัญระหว่าง setup จะมี `$` ต่อท้ายป้าย (เช่น `BUY $`) และระบุชื่อแนวใน tooltip
+- `Signals must sweep a key level` (ค่าเริ่มต้นปิด): รับเฉพาะสัญญาณที่กวาดแนวสำคัญ BUY ต้องกวาด sell-side (PDL / Asia L / EQL ...) SELL ต้องกวาด buy-side
 
 ## Session / news / volatility
 

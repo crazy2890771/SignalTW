@@ -18,6 +18,7 @@ const string G_EXEC = "Execution & costs (backtest)"
 const string G_EXIT = "Exit management"
 const string G_RISK = "Risk management"
 const string G_TIME = "Session / news / volatility"
+const string G_LIQ  = "Liquidity"
 const string G_DASH = "Dashboard"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
@@ -179,6 +180,23 @@ float  volMax      = input.float(2.5, "and", minval = 0, step = 0.1, inline = "v
      tooltip = "ATR14 เทียบค่าเฉลี่ย 100 แท่ง: ต่ำเกิน = ตลาดเงียบ spread กินกำไร, สูงเกิน = ช่วงข่าว/กระชาก SL หลุดง่าย")
 bool   shadeSess   = input.bool(false, "Shade sessions / blocked times", group = G_TIME,
      tooltip = "แรเงาพื้นหลัง: สีฟ้า = ช่วง session ที่เทรด, สีแดง = ช่วงห้ามเทรด (rollover / ข่าว)")
+
+bool   showLiq     = input.bool(true, "Show liquidity levels", group = G_LIQ,
+     tooltip = "แนวที่มี stop / liquidity กองอยู่ (เฉพาะกราฟ intraday)\nเส้นจะหยุดเมื่อราคาผ่าน: swept = ไส้ทะลุแล้วปิดกลับ (กวาด liquidity) มีเครื่องหมาย $ ที่แท่งนั้น, taken = ปิดทะลุไปเลย")
+bool   liqPD       = input.bool(true, "PDH / PDL", inline = "liq1", group = G_LIQ)
+bool   liqPW       = input.bool(false, "PWH / PWL", inline = "liq1", group = G_LIQ,
+     tooltip = "High / Low ของวันก่อนหน้า และของสัปดาห์ก่อนหน้า")
+bool   liqAsia     = input.bool(true, "Asia high / low", inline = "asia", group = G_LIQ)
+string asiaSess    = input.session("0000-0700", "", inline = "asia", group = G_LIQ,
+     tooltip = "ช่วง Asian session เวลา UTC (ค่าเริ่มต้น 00:00–07:00 UTC = 07:00–14:00 เวลาไทย) High/Low ของช่วงนี้มักถูกกวาดตอน London เปิด")
+bool   liqEq       = input.bool(true, "Equal highs / lows", inline = "eq", group = G_LIQ)
+float  eqTol       = input.float(0.1, "tolerance x ATR", minval = 0.01, step = 0.05, inline = "eq", group = G_LIQ,
+     tooltip = "EQH / EQL: swing high (หรือ low) 2 จุดที่ราคาห่างกันไม่เกิน x × ATR14 คือจุดที่ stop กองรวมกัน")
+int    eqLen       = input.int(5, "EQ swing length", minval = 2, maxval = 20, inline = "eq2", group = G_LIQ)
+int    maxEq       = input.int(6, "max EQ levels", minval = 1, maxval = 30, inline = "eq2", group = G_LIQ)
+bool   liqNeedSweep = input.bool(false, "Signals must sweep a key level", group = G_LIQ,
+     tooltip = "รับเฉพาะ BUY ที่กวาด sell-side liquidity (PDL / Asia L / EQL ...) ระหว่าง setup และ SELL ที่กวาด buy-side liquidity สัญญาณจะน้อยลงแต่คุณภาพสูงขึ้น\nสัญญาณที่กวาดแนวสำคัญจะมี $ ต่อท้ายป้ายเสมอ")
+color  liqCol      = input.color(#ab47bc, "Liquidity color", group = G_LIQ)
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 
@@ -608,6 +626,178 @@ string chartTag = tfName(timeframe.period)
 [v3, t3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
 
 //==============================================================================
+// LIQUIDITY (PDH/PDL, PWH/PWL, Asia range, equal highs / lows) + sweep detection
+//==============================================================================
+type Liq
+    line   ln
+    label  lb
+    float  price
+    bool   up        // true = buy-side liquidity (above highs), false = sell-side (below lows)
+    string name
+    int    born
+    bool   eq
+    bool   done = false
+
+var array<Liq> liqs = array.new<Liq>()
+bool   liqOn  = (showLiq or liqNeedSweep) and timeframe.isintraday
+color  liqLn  = showLiq ? color.new(liqCol, 15) : color(na)
+color  liqTx  = showLiq ? liqCol : color(na)
+
+dropLiq(int i) =>
+    Liq q = liqs.remove(i)
+    q.ln.delete()
+    q.lb.delete()
+
+newLiq(float price, int t, bool up, string name, bool eq) =>
+    line  ln = line.new(t, price, time, price, xloc = xloc.bar_time, extend = extend.right, color = liqLn, style = line.style_dotted)
+    label lb = label.new(time, price, name, xloc = xloc.bar_time, style = label.style_label_left, color = color(na), textcolor = liqTx, size = size.tiny)
+    liqs.push(Liq.new(ln, lb, price, up, name, bar_index, eq))
+    // Keep the drawing budget: oldest finished levels first, then the oldest active EQ levels beyond maxEq
+    int nEq = 0
+    for q in liqs
+        nEq += (q.eq and not q.done) ? 1 : 0
+    while liqs.size() > 40 or nEq > maxEq
+        int k = -1
+        for j = 0 to liqs.size() - 1
+            Liq c = liqs.get(j)
+            if c.done or (nEq > maxEq and c.eq)
+                k := j
+                break
+        if k < 0
+            break
+        nEq -= (liqs.get(k).eq and not liqs.get(k).done) ? 1 : 0
+        dropLiq(k)
+
+// Remove still-active levels with this name (a new session / day replaces them)
+expireLiq(string name) =>
+    int n = liqs.size()
+    if n > 0
+        for i = n - 1 to 0
+            Liq q = liqs.get(i)
+            if not q.done and q.name == name
+                dropLiq(i)
+
+// Equal highs / lows from chart-TF swings
+float eph = ta.pivothigh(high, eqLen, eqLen)
+float epl = ta.pivotlow(low, eqLen, eqLen)
+var array<float> eqHp = array.new<float>()
+var array<int>   eqHt = array.new<int>()
+var array<float> eqLp = array.new<float>()
+var array<int>   eqLt = array.new<int>()
+
+// Session sources
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+bool  newDayL  = timeframe.change("D")
+bool  newWeekL = timeframe.change("W")
+bool  inAsia   = not na(time(timeframe.period, asiaSess, "UTC"))
+var float asiaH = na
+var float asiaL = na
+var int   asiaT = na
+
+string bslHit = ""   // buy-side levels swept this bar (wick above, close back below)
+string sslHit = ""   // sell-side levels swept this bar (wick below, close back above)
+if liqOn and barstate.isconfirmed
+    // 1) Sweeps / breaks of existing levels
+    for q in liqs
+        if not q.done and bar_index > q.born and (q.up ? high > q.price : low < q.price)
+            bool grab = q.up ? close < q.price : close > q.price
+            q.done := true
+            q.ln.set_extend(extend.none)
+            q.ln.set_x2(time)
+            q.ln.set_color(showLiq ? color.new(liqCol, 65) : color(na))
+            q.lb.set_x(time)
+            q.lb.set_text(q.name + (grab ? " swept" : " taken"))
+            q.lb.set_textcolor(showLiq ? color.new(liqCol, 50) : color(na))
+            if grab and q.up
+                bslHit := bslHit == "" ? q.name : bslHit + ", " + q.name
+            if grab and not q.up
+                sslHit := sslHit == "" ? q.name : sslHit + ", " + q.name
+    // 2) Daily / weekly levels
+    if liqPD and newDayL and not na(pdh)
+        expireLiq("PDH")
+        expireLiq("PDL")
+        newLiq(pdh, time, true, "PDH", false)
+        newLiq(pdl, time, false, "PDL", false)
+    if liqPW and newWeekL and not na(pwh)
+        expireLiq("PWH")
+        expireLiq("PWL")
+        newLiq(pwh, time, true, "PWH", false)
+        newLiq(pwl, time, false, "PWL", false)
+    // 3) Asian range: track during the session, publish when it ends
+    if liqAsia
+        if inAsia and not inAsia[1]
+            asiaH := high
+            asiaL := low
+            asiaT := time
+        else if inAsia
+            asiaH := math.max(asiaH, high)
+            asiaL := math.min(asiaL, low)
+        if not inAsia and inAsia[1] and not na(asiaH)
+            expireLiq("Asia H")
+            expireLiq("Asia L")
+            newLiq(asiaH, asiaT, true, "Asia H", false)
+            newLiq(asiaL, asiaT, false, "Asia L", false)
+    // 4) Equal highs / lows: a new swing within tolerance of an earlier unswept swing
+    if liqEq
+        float tol = eqTol * atrC
+        int nh = eqHp.size()
+        if nh > 0
+            for j = nh - 1 to 0
+                if high > eqHp.get(j)
+                    eqHp.remove(j)
+                    eqHt.remove(j)
+        int nl = eqLp.size()
+        if nl > 0
+            for j = nl - 1 to 0
+                if low < eqLp.get(j)
+                    eqLp.remove(j)
+                    eqLt.remove(j)
+        if not na(eph)
+            int m = eqHp.size()
+            if m > 0
+                for j = m - 1 to 0
+                    if math.abs(eqHp.get(j) - eph) <= tol
+                        float lvl = math.max(eqHp.get(j), eph)
+                        bool  dup = false
+                        for q in liqs
+                            dup := dup or (not q.done and q.up and q.eq and math.abs(q.price - lvl) <= tol)
+                        if not dup
+                            newLiq(lvl, eqHt.get(j), true, "EQH", true)
+                        break
+            eqHp.push(eph)
+            eqHt.push(time[eqLen])
+            if eqHp.size() > 20
+                eqHp.shift()
+                eqHt.shift()
+        if not na(epl)
+            int m = eqLp.size()
+            if m > 0
+                for j = m - 1 to 0
+                    if math.abs(eqLp.get(j) - epl) <= tol
+                        float lvl = math.min(eqLp.get(j), epl)
+                        bool  dup = false
+                        for q in liqs
+                            dup := dup or (not q.done and not q.up and q.eq and math.abs(q.price - lvl) <= tol)
+                        if not dup
+                            newLiq(lvl, eqLt.get(j), false, "EQL", true)
+                        break
+            eqLp.push(epl)
+            eqLt.push(time[eqLen])
+            if eqLp.size() > 20
+                eqLp.shift()
+                eqLt.shift()
+    // 5) Sweep markers
+    if showLiq and bslHit != ""
+        label.new(bar_index, high, "$", yloc = yloc.abovebar, style = label.style_none, textcolor = liqCol, size = size.small,
+             tooltip = "Buy-side liquidity swept: " + bslHit)
+        alert(syminfo.ticker + " swept buy-side liquidity (" + bslHit + ") @ " + fmt(high), alert.freq_once_per_bar_close)
+    if showLiq and sslHit != ""
+        label.new(bar_index, low, "$", yloc = yloc.belowbar, style = label.style_none, textcolor = liqCol, size = size.small,
+             tooltip = "Sell-side liquidity swept: " + sslHit)
+        alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
+
+//==============================================================================
 // BUY / SELL SIGNALS
 //==============================================================================
 int   htfBias = v3 ? t3 : v2 ? t2 : v1 ? t1 : cTrend
@@ -686,6 +876,7 @@ type Trade
     bool  filled
     float cost        // estimated spread + slippage cost in R
     float tp1         // partial take-profit price (na = off)
+    string tag        // " $" when the setup swept a key liquidity level
     bool  part  = false   // TP1 taken, stop moved to break-even
     float realR = 0.0     // R already realised by the partial close
 
@@ -725,6 +916,7 @@ type Stats
     int   be        = 0
     int   fDaily    = 0
     int   fRoom     = 0
+    int   fLiq      = 0
     float dayR      = 0.0
     int   dayRun    = 0
     int   dayTrades = 0
@@ -765,7 +957,7 @@ closeTrade(Stats s, Trade t, float exitPx, int kind) =>
         s.sW := s.sW + (r > 0 ? 1 : 0)
         s.sR := s.sR + r
     string mark = kind == 1 ? " ✔ " : kind == -1 ? " ✘ " : kind == 2 ? " ½ " : " ⏱ "
-    t.lb.set_text((t.isBuy ? "BUY" : "SELL") + mark + (r >= 0 ? "+" : "") + str.tostring(r, "#.#") + "R")
+    t.lb.set_text((t.isBuy ? "BUY" : "SELL") + t.tag + mark + (r >= 0 ? "+" : "") + str.tostring(r, "#.#") + "R")
     if r < 0
         t.lb.set_color(color.gray)
     r
@@ -788,7 +980,7 @@ if barstate.isconfirmed and trades.size() > 0
             if hitFill
                 t.filled   := true
                 t.openTime := time
-                t.lb.set_text(t.isBuy ? "BUY" : "SELL")
+                t.lb.set_text((t.isBuy ? "BUY" : "SELL") + t.tag)
                 if (t.isBuy ? low <= t.sl : high + spreadPx >= t.sl)
                     closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, -1)
                     done := true
@@ -851,7 +1043,7 @@ planRetest(bool isBuy, float far, float near, bool lim) =>
     float chase = isBuy ? close - near : near - close
     [entry, sl, chase]
 
-drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float tp1, float risk, string info) =>
+drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float tp1, float risk, string info, string tag) =>
     color  c    = isBuy ? buyCol : sellCol
     string side = isBuy ? "BUY" : "SELL"
     float  lots = lotSize(risk)
@@ -860,7 +1052,7 @@ drawSignal(bool isBuy, bool lim, float entry, float sl, float tp, float tp1, flo
     string tip  = side + (lim ? " LIMIT" : "") + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + tp1s + "\nTP: " + fmt(tp) +
          "\nRisk: " + fmt(risk) + " (R:R 1:" + str.tostring(rrRatio) + ")" +
          "\nLot: " + str.tostring(lots) + " (risk " + str.tostring(rPct, "#.##") + "% of " + str.tostring(acctSize) + ")" + info
-    label lb = label.new(bar_index, close, side + (lim ? " LMT" : ""), yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
+    label lb = label.new(bar_index, close, side + tag + (lim ? " LMT" : ""), yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = c,
          textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
     alert(syminfo.ticker + " " + side + (lim ? " LIMIT" : "") + " @ " + fmt(entry) + " | SL " + fmt(sl) +
          (na(tp1) ? "" : " | TP1 " + fmt(tp1)) + " | TP " + fmt(tp) + " | Lot " + str.tostring(lots), alert.freq_once_per_bar_close)
@@ -891,6 +1083,7 @@ var bool  bSwept  = false
 var bool  bChoch  = false
 var float bFvgT   = na
 var float bFvgB   = na
+var string bLiq   = ""     // key sell-side liquidity swept during the setup
 // Bearish setup state
 var bool  sArm    = false
 var int   sArmB   = na
@@ -901,6 +1094,7 @@ var bool  sSwept  = false
 var bool  sChoch  = false
 var float sFvgT   = na
 var float sFvgB   = na
+var string sLiq   = ""     // key buy-side liquidity swept during the setup
 
 bool ltfBuy  = false
 bool ltfSell = false
@@ -922,6 +1116,7 @@ if isLTF and showSig and barstate.isconfirmed
             bChoch  := false
             bFvgT   := na
             bFvgB   := na
+            bLiq    := ""
         else
             bArmTop := math.max(bArmTop, bTouchTop)
             bArmBot := math.min(bArmBot, bTouchBot)
@@ -936,12 +1131,15 @@ if isLTF and showSig and barstate.isconfirmed
             sChoch  := false
             sFvgT   := na
             sFvgB   := na
+            sLiq    := ""
         else
             sArmTop := math.max(sArmTop, sTouchTop)
             sArmBot := math.min(sArmBot, sTouchBot)
     // Progress: sweep -> displacement FVG -> CHoCH
     if bArm
         bSweep := math.min(bSweep, low)
+        if bLiq == "" and sslHit != ""
+            bLiq := sslHit
         if not bSwept and not na(lastIPL) and low < lastIPL
             bSwept := true
         if bSwept and dispBullFvg
@@ -952,6 +1150,8 @@ if isLTF and showSig and barstate.isconfirmed
         ltfBuy := bChoch and not na(bFvgT)
     if sArm
         sSweep := math.max(sSweep, high)
+        if sLiq == "" and bslHit != ""
+            sLiq := bslHit
         if not sSwept and not na(lastIPH) and high > lastIPH
             sSwept := true
         if sSwept and dispBearFvg
@@ -994,6 +1194,7 @@ float  cSl      = na
 float  cChase   = 0.0
 bool   cLim     = false
 string cInfo    = ""
+string cLiq     = ""
 float  ltfBuf   = math.max(bufSpread * spreadPx, bufAtr * atrC)
 if not isLTF and (rawBuy or rawSell)
     S.setups := S.setups + 1
@@ -1010,6 +1211,7 @@ if not isLTF and (rawBuy or rawSell)
     cEntry := e0
     cSl    := sl0
     cChase := ch0
+    cLiq   := rawBuy ? sslHit : bslHit
     cInfo  := "\nModel: zone retest"
 else if ltfBuy
     candBuy := true
@@ -1021,6 +1223,7 @@ else if ltfBuy
     cEntry := ltfEntry == "FVG edge" ? bFvgT : ltfEntry == "FVG 50%" ? (bFvgT + bFvgB) / 2 : close + spreadPx + slipPx
     cSl    := bSweep - ltfBuf
     cChase := close - bFvgT
+    cLiq   := bLiq
     cInfo  := "\nModel: LTF CHoCH\nZone: " + fmt(bArmBot) + " – " + fmt(bArmTop) + "\nSweep low: " + fmt(bSweep) + "\nFVG: " + fmt(bFvgB) + " – " + fmt(bFvgT)
 else if ltfSell
     candSell := true
@@ -1032,7 +1235,11 @@ else if ltfSell
     cEntry := ltfEntry == "FVG edge" ? sFvgB : ltfEntry == "FVG 50%" ? (sFvgT + sFvgB) / 2 : close - slipPx
     cSl    := sSweep + spreadPx + ltfBuf
     cChase := sFvgB - close
+    cLiq   := sLiq
     cInfo  := "\nModel: LTF CHoCH\nZone: " + fmt(sArmBot) + " – " + fmt(sArmTop) + "\nSweep high: " + fmt(sSweep) + "\nFVG: " + fmt(sFvgB) + " – " + fmt(sFvgT)
+
+if cLiq != ""
+    cInfo := cInfo + "\nLiquidity swept: " + cLiq
 
 bool buySig  = false
 bool sellSig = false
@@ -1075,6 +1282,9 @@ if candBuy or candSell
     else if not cLim and maxChase > 0 and cChase > maxChase * risk
         why      := "price already ran " + str.tostring(cChase / risk, "#.##") + "R from the entry zone"
         S.fChase := S.fChase + 1
+    else if liqNeedSweep and cLiq == ""
+        why    := "no key liquidity level swept"
+        S.fLiq := S.fLiq + 1
     else if minRoomR > 0 and not na(room) and room < minRoomR * risk
         why     := "opposing HTF zone only " + str.tostring(room / risk, "#.##") + "R away"
         S.fRoom := S.fRoom + 1
@@ -1084,8 +1294,9 @@ if candBuy or candSell
         lastSig := time
         S.taken     := S.taken + 1
         S.dayTrades := S.dayTrades + 1
-        label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, tp1, risk, cInfo)
-        trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk, tp1))
+        string tag = cLiq != "" ? " $" : ""
+        label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, tp1, risk, cInfo, tag)
+        trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk, tp1, tag))
         if showSLTP
             line.delete(slLine)
             line.delete(tpLine)
@@ -1102,6 +1313,9 @@ if candBuy or candSell
 
 if barstate.islast
     refreshDisplay()
+    for q in liqs
+        if not q.done
+            q.lb.set_x(time)
 
 // Market structure (BOS / CHoCH) on chart timeframe
 bool msShow = msMode == "All" ? cms != 0 : msMode == "CHoCH only" ? math.abs(cms) == 2 : false
@@ -1124,6 +1338,8 @@ alertcondition(bullTouch, "Price in Bullish zone", "{{ticker}} price entered Bul
 alertcondition(bearTouch, "Price in Bearish zone", "{{ticker}} price entered Bearish OB/FVG zone @ {{close}}")
 alertcondition(buySig, "BUY signal", "{{ticker}} BUY @ {{close}}")
 alertcondition(sellSig, "SELL signal", "{{ticker}} SELL @ {{close}}")
+alertcondition(bslHit != "", "Buy-side liquidity swept", "{{ticker}} swept buy-side liquidity (highs) @ {{high}}")
+alertcondition(sslHit != "", "Sell-side liquidity swept", "{{ticker}} swept sell-side liquidity (lows) @ {{low}}")
 alertcondition(msShow and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
 alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
 
@@ -1141,8 +1357,8 @@ sideStat(int n, int w, float r) =>
     n > 0 ? str.tostring(n) + " · " + str.tostring(100.0 * w / n, "#") + "% · " + rStr(r) : "-"
 
 topFilter(Stats s) =>
-    array<int>    v = array.from(s.fSess, s.fNews, s.fVol, s.fSlMin, s.fSlMax, s.fChase, s.fPos, s.fTrend, s.fPD, s.fCool, s.fDaily, s.fRoom)
-    array<string> k = array.from("session", "news", "volatility", "SL too small", "SL too wide", "chase", "in position", "trend", "P/D", "cooldown", "daily limit", "opposing zone")
+    array<int>    v = array.from(s.fSess, s.fNews, s.fVol, s.fSlMin, s.fSlMax, s.fChase, s.fPos, s.fTrend, s.fPD, s.fCool, s.fDaily, s.fRoom, s.fLiq)
+    array<string> k = array.from("session", "news", "volatility", "SL too small", "SL too wide", "chase", "in position", "trend", "P/D", "cooldown", "daily limit", "opposing zone", "no liquidity sweep")
     int best = int(v.max())
     best > 0 ? k.get(v.indexof(best)) + " " + str.tostring(best) : "-"
 
@@ -1181,7 +1397,7 @@ if showStats and showSig and barstate.islast
         statRow(st, 16, "Filtered: setup", "SL< " + str.tostring(S.fSlMin) + " · SL> " + str.tostring(S.fSlMax) + " · chase " + str.tostring(S.fChase) +
              " · in pos " + str.tostring(S.fPos) + " · unfilled " + str.tostring(S.miss), fg)
         statRow(st, 17, "Filtered: bias", "trend " + str.tostring(S.fTrend) + " · P/D " + str.tostring(S.fPD) + " · cooldown " + str.tostring(S.fCool), fg)
-        statRow(st, 18, "Filtered: risk", "daily limit " + str.tostring(S.fDaily) + " · opposing zone " + str.tostring(S.fRoom), fg)
+        statRow(st, 18, "Filtered: risk", "daily limit " + str.tostring(S.fDaily) + " · opposing zone " + str.tostring(S.fRoom) + " · no liq sweep " + str.tostring(S.fLiq), fg)
 
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
