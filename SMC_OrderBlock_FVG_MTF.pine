@@ -124,8 +124,8 @@ float  maxSlAtr    = input.float(3.0, "Skip if SL > x ATR", minval = 0, step = 0
      tooltip = "ไม่เข้าเทรดถ้า SL กว้างเกิน x × ATR14 ของกราฟ (0 = ไม่จำกัด) กันเทรดที่ความเสี่ยงใหญ่เกินสำหรับการเทรดสั้น")
 float  maxChase    = input.float(0.5, "Skip if close ran > x R from zone", minval = 0, step = 0.1, group = G_EXEC,
      tooltip = "เฉพาะ Market entry: ถ้าแท่งสัญญาณปิดห่างจากขอบโซนเกิน x เท่าของ Risk แปลว่าราคาวิ่งไปแล้ว ไม่ไล่ราคา (0 = ปิด)")
-int    maxHold     = input.int(120, "Time stop (minutes, 0 = off)", minval = 0, step = 15, group = G_EXEC,
-     tooltip = "ถ้าเทรดยังไม่โดน TP/SL ภายในเวลานี้ ปิดที่ราคาปิดแท่ง (นับใน backtest)")
+int    maxHold     = input.int(24, "Time stop (bars, 0 = off)", minval = 0, group = G_EXEC,
+     tooltip = "ถ้าเทรดยังไม่โดน TP/SL ภายในจำนวนแท่งนี้ของกราฟ ปิดที่ราคาปิดแท่ง (นับใน backtest)\nนับเป็นแท่งจึงเหมาะกับทุก TF: กราฟ 5m = 2 ชั่วโมง, 15m = 6 ชั่วโมง")
 bool   onePos      = input.bool(true, "One position at a time", group = G_EXEC,
      tooltip = "ระหว่างที่มีออเดอร์ค้าง (รวม limit ที่รอ) สัญญาณใหม่จะถูกข้าม เหมือนการเทรดจริง")
 bool   showUnfilled = input.bool(false, "Show unfilled limit orders (LMT ⌀)", group = G_EXEC,
@@ -1013,7 +1013,7 @@ if barstate.isconfirmed and trades.size() > 0
                 if (t.isBuy ? low <= t.sl : high + spreadPx >= t.sl)
                     closeTrade(S, t, t.isBuy ? t.sl - slipPx : t.sl + slipPx, 2)
                     done := true
-            else if maxHold > 0 and time_close - t.openTime >= maxHold * 60000
+            else if maxHold > 0 and time_close - t.openTime >= maxHold * chartSec * 1000
                 closeTrade(S, t, t.isBuy ? close - slipPx : close + spreadPx + slipPx, 0)
                 done := true
         if done
