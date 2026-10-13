@@ -28,6 +28,32 @@
 3. กด **Save** แล้วกด **Add to chart**
 4. ปรับค่าได้ที่ ⚙️ Settings ของอินดิเคเตอร์
 
+## เวอร์ชัน Strategy (Strategy Tester)
+
+ไฟล์ [`SMC_OrderBlock_FVG_MTF_Strategy.pine`](SMC_OrderBlock_FVG_MTF_Strategy.pine) คือ logic เดียวกันทุกอย่าง แต่ส่งคำสั่งซื้อขายเข้า **Strategy Tester** ของ TradingView จึงได้:
+
+- รายการเทรดทั้งหมด (List of Trades) และ export เป็นไฟล์ได้
+- กราฟ Equity, Drawdown, Profit factor, Win rate ของ TradingView เอง
+- **Deep Backtesting** (แพ็กเกจ Premium) ทดสอบย้อนหลังได้ไกลกว่าข้อมูลที่โหลดบนกราฟ
+
+วิธีใช้
+
+1. Pine Editor → **Create new → Strategy** → วางโค้ดจากไฟล์ Strategy → Save → Add to chart
+2. เปิดแท็บ **Strategy Tester** ด้านล่างกราฟ
+3. ตั้งค่าใน ⚙️ → **Properties** ให้ตรงกับบัญชี
+
+| Properties | ค่าเริ่มต้น | หมายเหตุ |
+|---|---|---|
+| Initial capital | 10,000 USD | ขนาด lot คำนวณจากค่านี้ × Risk per trade (%) |
+| Commission | 0.25 ต่อหน่วย (oz) ต่อคำสั่ง | ไป-กลับ 0.50 = spread 0.30 + slippage 0.10 × 2 ปรับให้ตรงกับโบรกเกอร์ |
+| Margin long / short | 1% | เท่ากับ leverage 1:100 |
+
+คำสั่งที่ส่ง: Entry (Market หรือ Limit), TP1 ปิด 50% + SL, TP ส่วนที่เหลือ + SL, เลื่อน SL ไปราคาเข้าเมื่อปิด TP1 แล้ว, ปิดเมื่อครบ time stop, ยกเลิก Limit ที่ไม่ได้เข้า
+
+> ผลใน Strategy Tester อาจต่างจากตาราง Backtest ในตัว indicator เล็กน้อย เพราะ TradingView จำลองลำดับราคาภายในแท่งต่างกัน (ตารางใน indicator สมมติกรณีแย่สุดเสมอ) ในเวอร์ชัน Strategy ตารางนี้ปิดไว้เป็นค่าเริ่มต้น
+>
+> สำหรับนักพัฒนา: ไฟล์ Strategy ถูกสร้างจากไฟล์ indicator ด้วย `python3 tools/build_strategy.py` ให้แก้ที่ไฟล์ indicator แล้ว build ใหม่ทุกครั้ง
+
 ## การดูหลาย TF
 
 - **Chart TF**: โซนของ TF ที่เปิดอยู่ (เปลี่ยน TF กราฟเมื่อไรก็คำนวณใหม่ตาม TF นั้น)

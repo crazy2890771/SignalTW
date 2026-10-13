@@ -1241,6 +1241,8 @@ else if ltfSell
 if cLiq != ""
     cInfo := cInfo + "\nLiquidity swept: " + cLiq
 
+// <<STRATEGY_STATE>>
+
 bool buySig  = false
 bool sellSig = false
 if candBuy or candSell
@@ -1297,6 +1299,7 @@ if candBuy or candSell
         string tag = cLiq != "" ? " $" : ""
         label lb = drawSignal(isBuy, cLim, cEntry, cSl, tp, tp1, risk, cInfo, tag)
         trades.push(Trade.new(lb, isBuy, cEntry, cSl, tp, risk, time_close, bar_index + limitBars, not cLim, (spreadPx + (cLim ? 1 : 2) * slipPx) / risk, tp1, tag))
+        // <<STRATEGY_ENTRY>>
         if showSLTP
             line.delete(slLine)
             line.delete(tpLine)
@@ -1310,6 +1313,8 @@ if candBuy or candSell
     else if showSkipped
         label.new(bar_index, close, "×", yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = color(na), textcolor = color.gray,
              style = label.style_none, size = size.normal, tooltip = (isBuy ? "BUY" : "SELL") + " skipped: " + why + cInfo)
+
+// <<STRATEGY_MANAGE>>
 
 if barstate.islast
     refreshDisplay()
