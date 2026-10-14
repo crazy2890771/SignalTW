@@ -816,18 +816,35 @@ if msShow
 //==============================================================================
 // RSI DIVERGENCE (regular, chart timeframe)
 //==============================================================================
-// Price pivot vs the previous pivot of the same side: lower low + higher RSI = bullish, higher high + lower RSI = bearish
+// A new price pivot is measured against the most extreme earlier pivot of the same side within divMax bars
+// (not just the previous one, so small swings in between do not hide a divergence):
+// lower low + higher RSI = bullish, higher high + lower RSI = bearish
+type Piv
+    float price
+    float rsi
+    int   t
+    int   b
+
 float rsiV  = ta.rsi(close, rsiLen)
 float divPL = ta.pivotlow(low, divL, divR)
 float divPH = ta.pivothigh(high, divL, divR)
-var float dLoP = na
-var float dLoR = na
-var int   dLoT = na
-var int   dLoB = na
-var float dHiP = na
-var float dHiR = na
-var int   dHiT = na
-var int   dHiB = na
+var array<Piv> divLows  = array.new<Piv>()
+var array<Piv> divHighs = array.new<Piv>()
+
+// Lowest (low = true) or highest earlier pivot that is 5..divMax bars before bar b
+divRef(array<Piv> ps, int b, bool low) =>
+    Piv ref = na
+    for p in ps
+        int gap = b - p.b
+        if gap >= 5 and gap <= divMax and (na(ref) or (low ? p.price < ref.price : p.price > ref.price))
+            ref := p
+    ref
+
+// Keep the pivot and forget the ones too old to pair with later pivots
+divKeep(array<Piv> ps, Piv p) =>
+    ps.push(p)
+    while ps.size() > 0 and p.b - ps.first().b > divMax
+        ps.shift()
 
 drawDiv(int t1, float p1, int t2, float p2, bool bull, string tip) =>
     color c = bull ? msBullCol : msBearCol
@@ -843,28 +860,22 @@ if showDiv and barstate.isconfirmed
     int pt = time[divR]
     float pr = rsiV[divR]
     if not na(divPL)
-        int gap = pb - dLoB
-        if not na(dLoP) and gap >= 5 and gap <= divMax and divPL < dLoP and pr > dLoR and (not divZone or dLoR <= divLo)
+        Piv ref = divRef(divLows, pb, true)
+        if not na(ref) and divPL < ref.price and pr > ref.rsi and (not divZone or ref.rsi <= divLo)
             bullDiv := true
-            divMsg  := "Bullish RSI divergence: price " + fmt(dLoP) + " → " + fmt(divPL) + ", RSI " + str.tostring(dLoR, "#.0") + " → " + str.tostring(pr, "#.0")
+            divMsg  := "Bullish RSI divergence: price " + fmt(ref.price) + " → " + fmt(divPL) + ", RSI " + str.tostring(ref.rsi, "#.0") + " → " + str.tostring(pr, "#.0")
             if histOk
-                drawDiv(dLoT, dLoP, pt, divPL, true, divMsg)
-        dLoP := divPL
-        dLoR := pr
-        dLoT := pt
-        dLoB := pb
+                drawDiv(ref.t, ref.price, pt, divPL, true, divMsg)
+        divKeep(divLows, Piv.new(divPL, pr, pt, pb))
     if not na(divPH)
-        int gap = pb - dHiB
-        if not na(dHiP) and gap >= 5 and gap <= divMax and divPH > dHiP and pr < dHiR and (not divZone or dHiR >= divHi)
+        Piv ref = divRef(divHighs, pb, false)
+        if not na(ref) and divPH > ref.price and pr < ref.rsi and (not divZone or ref.rsi >= divHi)
             bearDiv := true
-            string bm = "Bearish RSI divergence: price " + fmt(dHiP) + " → " + fmt(divPH) + ", RSI " + str.tostring(dHiR, "#.0") + " → " + str.tostring(pr, "#.0")
+            string bm = "Bearish RSI divergence: price " + fmt(ref.price) + " → " + fmt(divPH) + ", RSI " + str.tostring(ref.rsi, "#.0") + " → " + str.tostring(pr, "#.0")
             divMsg  := joinMsg(divMsg, bm)
             if histOk
-                drawDiv(dHiT, dHiP, pt, divPH, false, bm)
-        dHiP := divPH
-        dHiR := pr
-        dHiT := pt
-        dHiB := pb
+                drawDiv(ref.t, ref.price, pt, divPH, false, bm)
+        divKeep(divHighs, Piv.new(divPH, pr, pt, pb))
     if alDiv and divMsg != ""
         alert(syminfo.ticker + " " + divMsg, alert.freq_once_per_bar_close)
 
