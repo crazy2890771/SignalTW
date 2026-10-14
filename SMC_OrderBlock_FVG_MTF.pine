@@ -332,14 +332,15 @@ updateZones(array<Zone> zs) =>
                 if hit
                     z.mitigated := true
                     if hideMit
-                        z.bx.delete()
                         zs.remove(i)
+                        z.bx.delete()
                     else
                         z.bx.set_extend(extend.none)
                         z.bx.set_right(time)
                         z.bx.set_bgcolor(color.new(chart.fg_color, 92))
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
+    n
 
 fmt(float p) => str.tostring(p, format.mintick)
 
