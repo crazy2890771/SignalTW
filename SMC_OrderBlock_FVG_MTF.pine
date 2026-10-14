@@ -13,6 +13,7 @@ const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
 const string G_SIG  = "BUY / SELL signals"
+const string G_BT   = "Backtest (BUY / SELL)"
 const string G_ALRT = "Alerts (phone notifications)"
 const string G_LIQ  = "Liquidity"
 const string G_DASH = "Dashboard"
@@ -96,6 +97,12 @@ bool   showSetup   = input.bool(true, "Show waiting zone", inline = "sshow", gro
 bool   showLevels  = input.bool(true, "Entry / SL / TP lines", inline = "sshow", group = G_SIG)
 color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
 color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
+
+bool   showBT      = input.bool(true, "Show backtest stats", inline = "bt", group = G_BT,
+     tooltip = "ทดสอบย้อนหลังทุกสัญญาณ BUY / SELL บนข้อมูลที่โหลดในกราฟ: ชนะเมื่อโดน TP ก่อน, แพ้เมื่อโดน SL ก่อน, แท่งเดียวโดนทั้งคู่นับเป็นแพ้\nป้ายสัญญาณจะเปลี่ยนเป็น ✔ / ✘ พร้อมผลเป็น R")
+string btPos       = input.string("Bottom Left", "", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], inline = "bt", group = G_BT)
+float  btSpread    = input.float(0.30, "Spread (price)", minval = 0, step = 0.05, group = G_BT,
+     tooltip = "ต้นทุน spread (XAUUSD ประมาณ 0.20–0.40) กราฟเป็นราคา Bid: BUY เข้าที่ Ask, SELL โดน SL / TP ด้วยราคา Ask")
 
 bool   alSig       = input.bool(true, "BUY / SELL signals", group = G_ALRT,
      tooltip = "แจ้งเตือนเมื่อเกิดสัญญาณ BUY / SELL พร้อม Entry / SL / TP")
@@ -725,6 +732,57 @@ var line  enLine  = na
 var line  slLine  = na
 var line  tpLine  = na
 
+// Backtest: every signal is followed until TP or SL (chart = Bid; same-bar TP and SL counts as a loss)
+type SigTrade
+    label lb
+    bool  isBuy
+    float entry
+    float sl
+    float tp
+    float risk
+
+var array<SigTrade> sigTrades = array.new<SigTrade>()
+var int   btW    = 0
+var int   btL    = 0
+var int   btBN   = 0
+var int   btBW   = 0
+var int   btSN   = 0
+var int   btSW   = 0
+var float btR    = 0.0
+var float btGW   = 0.0
+var float btGL   = 0.0
+var float btPeak = 0.0
+var float btDD   = 0.0
+var float btRisk = 0.0
+
+if showBT and barstate.isconfirmed and sigTrades.size() > 0
+    for i = sigTrades.size() - 1 to 0
+        SigTrade t = sigTrades.get(i)
+        bool hitSL = t.isBuy ? low <= t.sl : high + btSpread >= t.sl
+        bool hitTP = t.isBuy ? high >= t.tp : low + btSpread <= t.tp
+        if hitSL or hitTP
+            bool  win = hitTP and not hitSL
+            float c   = t.isBuy ? btSpread / t.risk : 0.0     // a BUY fills at Ask; a SELL pays the spread through its Ask-triggered exits
+            float r   = win ? sigRR - c : -1 - c
+            btW    += win ? 1 : 0
+            btL    += win ? 0 : 1
+            btR    += r
+            btGW   += math.max(r, 0.0)
+            btGL   += math.max(-r, 0.0)
+            btPeak := math.max(btPeak, btR)
+            btDD   := math.max(btDD, btPeak - btR)
+            btRisk += t.risk
+            if t.isBuy
+                btBN += 1
+                btBW += win ? 1 : 0
+            else
+                btSN += 1
+                btSW += win ? 1 : 0
+            t.lb.set_text((t.isBuy ? "BUY" : "SELL") + (win ? " ✔ " : " ✘ ") + (r >= 0 ? "+" : "") + str.tostring(r, "#.#") + "R")
+            if not win
+                t.lb.set_color(color.gray)
+            sigTrades.remove(i)
+
 bool buySig  = false
 bool sellSig = false
 if showSig and barstate.isconfirmed
@@ -755,8 +813,10 @@ if showSig and barstate.isconfirmed
         string zone  = isBuy ? fmt(bPoiB) + " – " + fmt(bPoiT) : fmt(sPoiB) + " – " + fmt(sPoiT)
         string tip   = side + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(sigRR) + ")" +
              "\nBias " + biasName + ": " + (bias > 0 ? "Bullish" : "Bearish") + "\nZone: " + zone
-        label.new(bar_index, close, side, yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = isBuy ? buyCol : sellCol,
+        label lb = label.new(bar_index, close, side, yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = isBuy ? buyCol : sellCol,
              textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
+        if showBT and risk > 0
+            sigTrades.push(SigTrade.new(lb, isBuy, entry, sl, tp, risk))
         if showLevels
             line.delete(enLine)
             line.delete(slLine)
@@ -836,6 +896,37 @@ alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish stru
 //==============================================================================
 // DASHBOARD
 //==============================================================================
+btRow(table t, int row, string k, string v, color c) =>
+    t.cell(0, row, k, text_color = chart.fg_color, text_size = size.small, text_halign = text.align_left)
+    t.cell(1, row, v, text_color = c, text_size = size.small, text_halign = text.align_right)
+
+if showBT and showSig and barstate.islast
+    string pos = btPos == "Top Right" ? position.top_right : btPos == "Bottom Right" ? position.bottom_right :
+         btPos == "Top Left" ? position.top_left : position.bottom_left
+    var table bt = table.new(pos, 2, 11, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+         border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
+    int   n    = btW + btL
+    float wr   = n > 0 ? 100.0 * btW / n : na
+    float be   = 100.0 / (1 + sigRR)
+    float expR = n > 0 ? btR / n : na
+    float pf   = btGL > 0 ? btGW / btGL : na
+    color fg   = chart.fg_color
+    color good = msBullCol
+    color bad  = msBearCol
+    bt.cell(0, 0, "Backtest BUY / SELL · R:R 1:" + str.tostring(sigRR) + " · spread " + str.tostring(btSpread), text_color = fg, text_size = size.small)
+    bt.merge_cells(0, 0, 1, 0)
+    btRow(bt, 1, "Trades (closed / open)", str.tostring(n) + " / " + str.tostring(sigTrades.size()), fg)
+    btRow(bt, 2, "Win / Loss", str.tostring(btW) + " / " + str.tostring(btL), fg)
+    btRow(bt, 3, "Win rate", na(wr) ? "-" : str.tostring(wr, "#.#") + "%", na(wr) ? fg : wr > be ? good : bad)
+    btRow(bt, 4, "Break-even win rate", str.tostring(be, "#.#") + "% (before costs)", fg)
+    btRow(bt, 5, "Expectancy / trade", na(expR) ? "-" : (expR >= 0 ? "+" : "") + str.tostring(expR, "#.##") + " R", na(expR) ? fg : expR > 0 ? good : bad)
+    btRow(bt, 6, "Net result", (btR >= 0 ? "+" : "") + str.tostring(btR, "#.##") + " R", btR >= 0 ? good : bad)
+    btRow(bt, 7, "Profit factor", na(pf) ? "-" : str.tostring(pf, "#.##"), na(pf) ? fg : pf >= 1 ? good : bad)
+    btRow(bt, 8, "Max drawdown", "-" + str.tostring(btDD, "#.#") + " R", fg)
+    btRow(bt, 9, "Avg SL distance", n > 0 ? fmt(btRisk / n) : "-", fg)
+    btRow(bt, 10, "BUY · SELL (n · win)", (btBN > 0 ? str.tostring(btBN) + " · " + str.tostring(100.0 * btBW / btBN, "#") + "%" : "-") + "  |  " +
+         (btSN > 0 ? str.tostring(btSN) + " · " + str.tostring(100.0 * btSW / btSN, "#") + "%" : "-"), fg)
+
 trendCell(table tb, int row, string name, int tr) =>
     string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
     color  c   = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray

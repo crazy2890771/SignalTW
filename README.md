@@ -71,6 +71,16 @@
 | R:R / SL buffer | 2.0 / 0.1 ATR | |
 | Wait for retest | 48 แท่ง | 5m = 4 ชั่วโมง |
 
+### Backtest ของ BUY / SELL
+
+ตาราง **Backtest** (มุมซ้ายล่าง ปิดได้ที่ `Show backtest stats`) ทดสอบทุกสัญญาณบนข้อมูลที่โหลดในกราฟ
+
+- ชนะ = โดน TP ก่อน, แพ้ = โดน SL ก่อน, แท่งเดียวโดนทั้งคู่ = แพ้ (สมมติกรณีแย่สุด)
+- หัก spread (ค่าเริ่มต้น 0.30) กราฟถือเป็นราคา Bid: BUY เข้าที่ Ask, SELL โดน SL / TP ด้วยราคา Ask
+- ป้ายสัญญาณเปลี่ยนเป็น `BUY ✔ +1.9R` / `BUY ✘ -1.1R` เมื่อรู้ผล
+- แสดง: จำนวนเทรด, Win rate เทียบจุดคุ้มทุน (R:R 1:2 = 33.3%), Expectancy ต่อเทรด, Net R, Profit factor, Max drawdown, ระยะ SL เฉลี่ย, ผลแยก BUY / SELL
+- ข้อมูลที่ใช้ทดสอบ = เท่าที่ TradingView โหลดในกราฟ (5m ประมาณ 2–3 สัปดาห์ตามแพ็กเกจ) เลื่อนกราฟไปทางซ้ายเพื่อโหลดเพิ่ม ควรมีอย่างน้อย 30–50 เทรดก่อนสรุป
+
 แจ้งเตือน: Alert แบบ `Any alert() function call` ตัวเดิมจะส่ง BUY / SELL พร้อม Entry / SL / TP ด้วย (ปิดได้ที่ `BUY / SELL signals` ในกลุ่ม Alerts) หรือสร้าง Alert แยกด้วย Condition `BUY signal` / `SELL signal`
 
 ## Liquidity
