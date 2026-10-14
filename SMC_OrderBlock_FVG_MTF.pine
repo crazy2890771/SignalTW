@@ -67,7 +67,7 @@ float  fvgMinPct   = input.float(0.0, "Min gap size (%)", minval = 0, step = 0.0
 color  bullFVGCol  = input.color(color.new(#2962ff, 80), "Bullish FVG", inline = "fvgc", group = G_FVG)
 color  bearFVGCol  = input.color(color.new(#ff9800, 80), "Bearish FVG", inline = "fvgc", group = G_FVG)
 
-string msMode      = input.string("CHoCH only", "BOS / CHoCH (chart TF)", options = ["All", "CHoCH only", "None"], group = G_MS)
+string msMode      = input.string("CHoCH only", "BOS / CHoCH", options = ["All", "CHoCH only", "None"], group = G_MS)
 color  msBullCol   = input.color(#089981, "Bullish", inline = "msc", group = G_MS)
 color  msBearCol   = input.color(#f23645, "Bearish", inline = "msc", group = G_MS)
 
@@ -102,6 +102,11 @@ bool   alLiq       = input.bool(false, "Liquidity sweep", group = G_ALRT,
 
 bool   showDash    = input.bool(true, "Show trend dashboard", group = G_DASH)
 string dashPos     = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = G_DASH)
+// Newer inputs are declared last so settings saved on charts keep their place
+string msTfOpt     = input.string("Auto", "CHoCH / BOS timeframe", options = ["Auto", "Chart TF", "15m", "1H"], group = G_MS,
+     tooltip = "Auto = กราฟ 5m หรือเล็กกว่า ใช้ CHoCH / BOS ของ 15m (ป้ายเขียนว่า CHoCH 15m) ลดป้ายจากการแกว่งย่อย กราฟ TF อื่นใช้ TF ของกราฟ\nChart TF = ใช้ TF ของกราฟเสมอ (ป้ายเขียนว่า CHoCH)\nถ้าเลือก TF ที่ต่ำกว่าหรือเท่ากับกราฟ จะใช้ TF ของกราฟแทน")
+string dashStyle   = input.string("Compact", "Style", options = ["Compact", "Full"], group = G_DASH,
+     tooltip = "Compact = แถวเดียว เช่น 5m ▼ | 15m ▼ | 1H ▼ | 4H ▲ | 1D ▼ (เหมาะกับมือถือ)\nFull = ตาราง TF / Trend")
 
 // Effective HTFs (fixed set, auto by chart TF, or manual)
 int    chartS   = timeframe.in_seconds(timeframe.period)
@@ -256,6 +261,11 @@ detect(int len, float minPct) =>
 detectConfirmed(int len, float minPct) =>
     [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] = detect(len, minPct)
     [a1[1], a2[1], a3[1], a4[1], b1[1], b2[1], b3[1], b4[1], c1[1], c2[1], c3[1], c4[1], d1[1], d2[1], d3[1], d4[1], m1[1], m2[1], m3[1], t[1]]
+
+// Only the structure break of the last confirmed bar (for CHoCH / BOS of a higher timeframe)
+structConfirmed(int len) =>
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] = detect(len, 0.0)
+    [m1[1], m2[1], m3[1]]
 
 //==============================================================================
 // HELPERS
@@ -715,17 +725,25 @@ if barstate.islast
                         a.lb.set_text(a.lb.get_text() + " · " + b.name)
                         b.lb.set_text("")
 
-// Market structure (BOS / CHoCH) on chart timeframe
-bool msShow = msMode == "All" ? cms != 0 : msMode == "CHoCH only" ? math.abs(cms) == 2 : false
-if msShow and barstate.isconfirmed
-    color  c   = cms > 0 ? msBullCol : msBearCol
-    string txt = math.abs(cms) == 2 ? "CHoCH" : "BOS"
+// Market structure (BOS / CHoCH): chart timeframe, or a higher one (Auto: 15m on charts of 5m and below)
+string msTfReq = msTfOpt == "15m" ? "15" : msTfOpt == "1H" ? "60" : msTfOpt == "Auto" and chartS <= 300 ? "15" : timeframe.period
+bool   msHtf   = timeframe.in_seconds(msTfReq) > chartS
+string msTf    = msHtf ? msTfReq : timeframe.period
+[hms, hmsLvl, hmsX] = request.security(syminfo.tickerid, msTf, structConfirmed(swingLen), lookahead = barmerge.lookahead_on)
+bool   msNew = timeframe.change(msTf)
+int    sMs   = msHtf ? (msNew ? hms : 0) : (barstate.isconfirmed ? cms : 0)
+float  sLvl  = msHtf ? hmsLvl : cmsLvl
+int    sX    = msHtf ? hmsX : cmsX
+bool msShow = msMode == "All" ? sMs != 0 : msMode == "CHoCH only" ? math.abs(sMs) == 2 : false
+if msShow
+    color  c   = sMs > 0 ? msBullCol : msBearCol
+    string txt = (math.abs(sMs) == 2 ? "CHoCH" : "BOS") + (msHtf ? " " + tfName(msTf) : "")
     if histOk
-        histLines.push(line.new(cmsX, cmsLvl, time, cmsLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed))
-        histLabels.push(label.new(int(math.avg(cmsX, time)), cmsLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
-             style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.tiny))
+        histLines.push(line.new(sX, sLvl, time, sLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed))
+        histLabels.push(label.new(int(math.avg(sX, time)), sLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
+             style = sMs > 0 ? label.style_label_down : label.style_label_up, size = size.tiny))
     if alMS
-        alert(syminfo.ticker + " " + (cms > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(cmsLvl), alert.freq_once_per_bar)
+        alert(syminfo.ticker + " " + (sMs > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(sLvl), alert.freq_once_per_bar)
 
 //==============================================================================
 // ALERT CONDITIONS
@@ -738,40 +756,48 @@ alertcondition(enterBull, "Price entered Bullish OB/FVG", "{{ticker}} price ente
 alertcondition(enterBear, "Price entered Bearish OB/FVG", "{{ticker}} price entered a Bearish OB/FVG zone @ {{close}}")
 alertcondition(bslHit != "", "Buy-side liquidity swept", "{{ticker}} swept buy-side liquidity (highs) @ {{high}}")
 alertcondition(sslHit != "", "Sell-side liquidity swept", "{{ticker}} swept sell-side liquidity (lows) @ {{low}}")
-alertcondition(msShow and cms > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
-alertcondition(msShow and cms < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
+alertcondition(msShow and sMs > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
+alertcondition(msShow and sMs < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
 
 //==============================================================================
 // DASHBOARD
 //==============================================================================
-trendCell(table tb, int row, string name, int tr) =>
-    string txt = tr > 0 ? "▲ Bullish" : tr < 0 ? "▼ Bearish" : "– Neutral"
-    color  c   = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray
-    tb.cell(0, row, name, text_color = chart.fg_color, text_size = size.small)
-    tb.cell(1, row, txt, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small)
+// Compact: one row of "5m ▼" cells, Full: TF / Trend table (k = position of the TF, 0 = chart TF)
+trendCell(table tb, int k, string name, int tr, bool compact) =>
+    string arrow = tr > 0 ? "▲" : tr < 0 ? "▼" : "–"
+    string word  = tr > 0 ? "Bullish" : tr < 0 ? "Bearish" : "Neutral"
+    color  c     = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray
+    if compact
+        tb.cell(k, 0, name + " " + arrow, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small,
+             tooltip = name + " trend: " + word)
+    else
+        tb.cell(0, k + 1, name + (k == 0 ? " (chart)" : ""), text_color = chart.fg_color, text_size = size.small)
+        tb.cell(1, k + 1, arrow + " " + word, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small)
 
 if showDash and barstate.islast
     string p = dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Right" ? position.bottom_right :
          dashPos == "Top Left" ? position.top_left : position.bottom_left
-    var table tb = table.new(p, 2, 7, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
+    bool cmp = dashStyle == "Compact"
+    var table tb = table.new(p, 6, 7, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
          border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
-    tb.clear(0, 0, 1, 6)
-    tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
-    tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
-    int row = 1
-    trendCell(tb, row, chartTag + " (chart)", cTrend)
+    tb.clear(0, 0, 5, 6)
+    if not cmp
+        tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
+        tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
+    int k = 0
+    trendCell(tb, k, chartTag, cTrend, cmp)
     if v1
-        row += 1
-        trendCell(tb, row, tfName(eTf1), t1)
+        k += 1
+        trendCell(tb, k, tfName(eTf1), t1, cmp)
     if v2
-        row += 1
-        trendCell(tb, row, tfName(eTf2), t2)
+        k += 1
+        trendCell(tb, k, tfName(eTf2), t2, cmp)
     if v3
-        row += 1
-        trendCell(tb, row, tfName(eTf3), t3)
+        k += 1
+        trendCell(tb, k, tfName(eTf3), t3, cmp)
     if v4
-        row += 1
-        trendCell(tb, row, tfName(eTf4), t4)
+        k += 1
+        trendCell(tb, k, tfName(eTf4), t4, cmp)
     if v5
-        row += 1
-        trendCell(tb, row, tfName(eTf5), t5)
+        k += 1
+        trendCell(tb, k, tfName(eTf5), t5, cmp)
