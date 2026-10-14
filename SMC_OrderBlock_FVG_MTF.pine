@@ -284,9 +284,10 @@ detect(int len, float minPct) =>
      ms, msLvl, msX, trend, flip]
 
 // Same as detect() but shifted one bar back -> used with lookahead_on for non-repainting HTF data
+// (also returns that bar's close, used to invalidate HTF Order Blocks in Close mode)
 detectConfirmed(int len, float minPct) =>
     [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f] = detect(len, minPct)
-    [a1[1], a2[1], a3[1], a4[1], b1[1], b2[1], b3[1], b4[1], c1[1], c2[1], c3[1], c4[1], d1[1], d2[1], d3[1], d4[1], m1[1], m2[1], m3[1], t[1], f[1]]
+    [a1[1], a2[1], a3[1], a4[1], b1[1], b2[1], b3[1], b4[1], c1[1], c2[1], c3[1], c4[1], d1[1], d2[1], d3[1], d4[1], m1[1], m2[1], m3[1], t[1], f[1], close[1]]
 
 // Only the structure break of the last confirmed bar (for CHoCH / BOS of a higher timeframe)
 structConfirmed(int len) =>
@@ -346,15 +347,16 @@ addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color
             Zone old = zs.remove(drop.get(j))
             killZone(old)
 
-// Mitigation check (confirmed bars)
-updateZones(array<Zone> zs) =>
+// Mitigation check (confirmed bars). OBs in Close mode are checked against the close of their own timeframe:
+// obCheck = a bar of that timeframe just closed, obClose = its close (chart TF: every bar, close)
+updateZones(array<Zone> zs, bool obCheck, float obClose) =>
     int n = zs.size()
     if n > 0
         for i = n - 1 to 0
             Zone z = zs.get(i)
             if not z.mitigated
                 bool hit = z.isOB ?
-                     (obMitMode == "Close" ? (z.bull ? close < z.bot : close > z.top) : (z.bull ? low < z.bot : high > z.top)) :
+                     (obMitMode == "Close" ? obCheck and (z.bull ? obClose < z.bot : obClose > z.top) : (z.bull ? low < z.bot : high > z.top)) :
                      (z.bull ? low <= z.bot : high >= z.top)
                 if hit
                     z.mitigated := true
@@ -368,7 +370,7 @@ updateZones(array<Zone> zs) =>
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
                         line.delete(z.ce)
-                else if fvgShrink and not z.isOB and bar_index > z.born and (z.bull ? low < z.top : high > z.bot)
+                else if fvgShrink and not z.isOB and (bar_index > z.born or z.rank > 0) and (z.bull ? low < z.top : high > z.bot)
                     // Partially filled FVG: keep only the part of the gap that is still open
                     if z.bull
                         z.top := low
@@ -388,28 +390,37 @@ fmtS(float p) => close >= 1000 ? str.tostring(p, "#.0") : fmt(p)
 
 tfOk(int sec) => (sec == 300 and al5) or (sec == 900 and al15) or (sec == 3600 and al60) or (sec == 14400 and al240) or (sec == 86400 and alD)
 
+joinMsg(string a, string b) => a == "" ? b : b == "" ? a : a + " | " + b
+
+// Notification events: a key (so each event is sent once) and its text, collected during the script run
+pushEv(array<string> evK, array<string> evT, string k, string t) =>
+    evK.push(k)
+    evT.push(t)
+
+zoneKey(Zone z) => str.tostring(z.left) + z.tag + (z.isOB ? "O" : "F") + (z.bull ? "u" : "d")
+zoneTxt(Zone z) => (z.bull ? "Bullish " : "Bearish ") + (z.isOB ? "OB " : "FVG ") + z.tag + " " + fmt(z.bot) + "–" + fmt(z.top)
+
 // First time price trades into a zone (once per zone, also intrabar on realtime bars).
-// Returns [bullish entered, bearish entered, alert text] for the alert-enabled TFs and zone types.
-checkEntry(array<Zone> zs) =>
-    bool   bIn = false
-    bool   sIn = false
-    string msg = ""
+// HTF zones count from the chart bar they appear on (that bar comes after the HTF bar that formed them).
+// Returns [bullish entered, bearish entered] for the alert-enabled TFs and zone types.
+checkEntry(array<Zone> zs, array<string> evK, array<string> evT) =>
+    bool bIn = false
+    bool sIn = false
     for z in zs
-        if not z.mitigated and not z.entered and bar_index > z.born and high >= z.bot and low <= z.top
+        if not z.mitigated and not z.entered and (bar_index > z.born or z.rank > 0) and high >= z.bot and low <= z.top
             z.entered := true
             if tfOk(z.tfSec) and (z.isOB ? alOB : alFVG)
                 bIn := bIn or z.bull
                 sIn := sIn or not z.bull
-                msg := msg + (msg == "" ? "" : " | ") + (z.bull ? "Bullish " : "Bearish ") + (z.isOB ? "OB " : "FVG ") + z.tag + " " + fmt(z.bot) + "–" + fmt(z.top)
-    [bIn, sIn, msg]
-
-joinMsg(string a, string b) => a == "" ? b : b == "" ? a : a + " | " + b
+                if alEnter
+                    pushEv(evK, evT, "E" + zoneKey(z), "entered " + zoneTxt(z))
+    [bIn, sIn]
 
 // Price coming within nearAtr x ATR of a 1H+ zone it has not reached yet.
 // Once per zone, and only after price was farther away (a zone born next to price does not alert at once).
-checkNear(array<Zone> zs) =>
-    string msg = ""
-    float  thr = nearAtr * atrC
+checkNear(array<Zone> zs, array<string> evK, array<string> evT) =>
+    float thr = nearAtr * atrC
+    int   cnt = 0
     for z in zs
         if not z.mitigated and not z.entered and not z.near and z.tfSec >= 3600 and tfOk(z.tfSec) and (z.isOB ? alOB : alFVG)
             float d = z.bull ? low - z.top : z.bot - high
@@ -417,9 +428,9 @@ checkNear(array<Zone> zs) =>
                 z.armed := true
             else if z.armed and d > 0
                 z.near := true
-                msg := msg + (msg == "" ? "" : " | ") + (z.bull ? "Bullish " : "Bearish ") + (z.isOB ? "OB " : "FVG ") + z.tag + " " +
-                     fmt(z.bot) + "–" + fmt(z.top) + " (" + fmtS(z.bull ? close - z.top : z.bot - close) + " away)"
-    msg
+                cnt    += 1
+                pushEv(evK, evT, "N" + zoneKey(z), "approaching " + zoneTxt(z) + " (" + fmtS(z.bull ? close - z.top : z.bot - close) + " away)")
+    cnt
 
 // Trend of a 1H / 4H slot flipped on this bar (its first chart bar after the HTF close)
 trendFlipMsg(simple string tf, bool valid, int t, float f) =>
@@ -435,8 +446,7 @@ trendFlipMsg(simple string tf, bool valid, int t, float f) =>
 // Creates zones for one timeframe, returns [newBullOB, newBearOB, newBullFVG, newBearFVG]
 handleZones(bool isNew, int rank, string tag, int tfSec, array<Zone> zs,
      bool a1, float a2, float a3, int a4, bool b1, float b2, float b3, int b4,
-     bool c1, float c2, float c3, int c4, bool d1, float d2, float d3, int d4) =>
-    string sfx = " " + tag
+     bool c1, float c2, float c3, int c4, bool d1, float d2, float d3, int d4, array<string> evK, array<string> evT) =>
     bool nbOB = isNew and showOB and a1
     bool nsOB = isNew and showOB and b1
     bool nbF  = isNew and showFVG and c1
@@ -444,32 +454,32 @@ handleZones(bool isNew, int rank, string tag, int tfSec, array<Zone> zs,
     if nbOB
         addZone(zs, a2, a3, a4, true, true, bullOBCol, rank, tag, maxOB, tfSec)
         if alNew
-            alert(syminfo.ticker + " Bullish OB" + sfx + " : " + fmt(a3) + " - " + fmt(a2), alert.freq_once_per_bar)
+            pushEv(evK, evT, "Z" + str.tostring(a4) + tag + "Ou", "new Bullish OB " + tag + " " + fmt(a3) + "–" + fmt(a2))
     if nsOB
         addZone(zs, b2, b3, b4, false, true, bearOBCol, rank, tag, maxOB, tfSec)
         if alNew
-            alert(syminfo.ticker + " Bearish OB" + sfx + " : " + fmt(b3) + " - " + fmt(b2), alert.freq_once_per_bar)
+            pushEv(evK, evT, "Z" + str.tostring(b4) + tag + "Od", "new Bearish OB " + tag + " " + fmt(b3) + "–" + fmt(b2))
     if nbF
         addZone(zs, c2, c3, c4, true, false, bullFVGCol, rank, tag, maxFVG, tfSec)
         if alNew
-            alert(syminfo.ticker + " Bullish FVG" + sfx + " : " + fmt(c3) + " - " + fmt(c2), alert.freq_once_per_bar)
+            pushEv(evK, evT, "Z" + str.tostring(c4) + tag + "Fu", "new Bullish FVG " + tag + " " + fmt(c3) + "–" + fmt(c2))
     if nsF
         addZone(zs, d2, d3, d4, false, false, bearFVGCol, rank, tag, maxFVG, tfSec)
         if alNew
-            alert(syminfo.ticker + " Bearish FVG" + sfx + " : " + fmt(d3) + " - " + fmt(d2), alert.freq_once_per_bar)
+            pushEv(evK, evT, "Z" + str.tostring(d4) + tag + "Fd", "new Bearish FVG " + tag + " " + fmt(d3) + "–" + fmt(d2))
     [nbOB, nsOB, nbF, nsF]
 
 // Higher-timeframe slot (non-repainting: only confirmed HTF bars are used)
 var int chartSec = timeframe.in_seconds(timeframe.period)
 
-htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
-    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f] =
+htfSlot(simple string tf, bool use, array<Zone> zs, int rank, array<string> evK, array<string> evT) =>
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f, hc] =
          request.security(syminfo.tickerid, tf, detectConfirmed(swingLen, fvgMinPct), lookahead = barmerge.lookahead_on)
     bool valid = use and timeframe.in_seconds(tf) > chartSec
     bool isNew = valid and timeframe.change(tf)
     [nb, ns, nbf, nsf] = handleZones(isNew, rank, tfName(tf), timeframe.in_seconds(tf), zs,
-         a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4)
-    [valid, t, f, nb or nbf, ns or nsf]
+         a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, evK, evT)
+    [valid, t, f, nb or nbf, ns or nsf, isNew, hc]
 
 //==============================================================================
 // STATE
@@ -541,53 +551,60 @@ refreshDisplay() =>
 //==============================================================================
 // MAIN
 //==============================================================================
-// Mitigation checks first, so zones created on this bar are not mitigated by the same bar
+// Notification events of this script run (sent together at the end of the script)
+array<string> evKey = array.new<string>()
+array<string> evTxt = array.new<string>()
+
+// Chart-TF mitigation first, so zones created on this bar are not mitigated by the bar that formed them
 if barstate.isconfirmed
-    updateZones(zC)
-    updateZones(zH1)
-    updateZones(zH2)
-    updateZones(zH3)
-    updateZones(zH4)
-    updateZones(zH5)
+    updateZones(zC, true, close)
 
 // Chart timeframe
 string chartTag = tfName(timeframe.period)
 [ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, cms, cmsLvl, cmsX, cTrend, cFlip] = detect(swingLen, fvgMinPct)
 [cnb, cns, cnbf, cnsf] = handleZones(showChartTF and barstate.isconfirmed, 0, chartTag, chartSec, zC,
-     ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4)
+     ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, evKey, evTxt)
 
 // Higher timeframes
-[v1, t1, f1, nBull1, nBear1] = htfSlot(eTf1, eUse1, zH1, 1)
-[v2, t2, f2, nBull2, nBear2] = htfSlot(eTf2, eUse2, zH2, 2)
-[v3, t3, f3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
-[v4, t4, f4, nBull4, nBear4] = htfSlot(eTf4, eUse4, zH4, 4)
-[v5, t5, f5, nBull5, nBear5] = htfSlot(eTf5, eUse5, zH5, 5)
+[v1, t1, f1, nBull1, nBear1, new1, hc1] = htfSlot(eTf1, eUse1, zH1, 1, evKey, evTxt)
+[v2, t2, f2, nBull2, nBear2, new2, hc2] = htfSlot(eTf2, eUse2, zH2, 2, evKey, evTxt)
+[v3, t3, f3, nBull3, nBear3, new3, hc3] = htfSlot(eTf3, eUse3, zH3, 3, evKey, evTxt)
+[v4, t4, f4, nBull4, nBear4, new4, hc4] = htfSlot(eTf4, eUse4, zH4, 4, evKey, evTxt)
+[v5, t5, f5, nBull5, nBear5, new5, hc5] = htfSlot(eTf5, eUse5, zH5, 5, evKey, evTxt)
+
+// HTF mitigation after creation: the chart bar an HTF zone appears on already counts (it comes after the HTF bar
+// that formed the zone), and OBs in Close mode need a close of their own timeframe beyond the zone
+if barstate.isconfirmed
+    updateZones(zH1, new1, hc1)
+    updateZones(zH2, new2, hc2)
+    updateZones(zH3, new3, hc3)
+    updateZones(zH4, new4, hc4)
+    updateZones(zH5, new5, hc5)
 
 // Price entering a zone (every tick on realtime bars -> notification as soon as price reaches the zone)
-[eb0, es0, em0] = checkEntry(zC)
-[eb1, es1, em1] = checkEntry(zH1)
-[eb2, es2, em2] = checkEntry(zH2)
-[eb3, es3, em3] = checkEntry(zH3)
-[eb4, es4, em4] = checkEntry(zH4)
-[eb5, es5, em5] = checkEntry(zH5)
-bool   enterBull = eb0 or eb1 or eb2 or eb3 or eb4 or eb5
-bool   enterBear = es0 or es1 or es2 or es3 or es4 or es5
-string enterMsg  = joinMsg(joinMsg(joinMsg(em0, em1), joinMsg(em2, em3)), joinMsg(em4, em5))
-if alEnter and enterMsg != ""
-    alert(syminfo.ticker + " " + fmt(close) + " entered " + enterMsg, alert.freq_once_per_bar)
+[eb0, es0] = checkEntry(zC, evKey, evTxt)
+[eb1, es1] = checkEntry(zH1, evKey, evTxt)
+[eb2, es2] = checkEntry(zH2, evKey, evTxt)
+[eb3, es3] = checkEntry(zH3, evKey, evTxt)
+[eb4, es4] = checkEntry(zH4, evKey, evTxt)
+[eb5, es5] = checkEntry(zH5, evKey, evTxt)
+bool enterBull = eb0 or eb1 or eb2 or eb3 or eb4 or eb5
+bool enterBear = es0 or es1 or es2 or es3 or es4 or es5
 
 // Price approaching a 1H / 4H / 1D zone (heads-up before it gets there)
 if alNear
-    string nearMsg = joinMsg(joinMsg(joinMsg(checkNear(zC), checkNear(zH1)), joinMsg(checkNear(zH2), checkNear(zH3))),
-         joinMsg(checkNear(zH4), checkNear(zH5)))
-    if nearMsg != ""
-        alert(syminfo.ticker + " " + fmt(close) + " approaching " + nearMsg, alert.freq_once_per_bar)
+    checkNear(zC, evKey, evTxt)
+    checkNear(zH1, evKey, evTxt)
+    checkNear(zH2, evKey, evTxt)
+    checkNear(zH3, evKey, evTxt)
+    checkNear(zH4, evKey, evTxt)
+    checkNear(zH5, evKey, evTxt)
 
 // 1H / 4H trend change
 string trendMsg = joinMsg(joinMsg(trendFlipMsg(eTf1, v1, t1, f1), trendFlipMsg(eTf2, v2, t2, f2)),
      joinMsg(trendFlipMsg(eTf3, v3, t3, f3), joinMsg(trendFlipMsg(eTf4, v4, t4, f4), trendFlipMsg(eTf5, v5, t5, f5))))
 if alTrend and trendMsg != ""
-    alert(syminfo.ticker + " " + fmt(close) + " " + trendMsg, alert.freq_once_per_bar)
+    pushEv(evKey, evTxt, "T", trendMsg)
 
 //==============================================================================
 // LIQUIDITY (PDH/PDL, PWH/PWL, Asia range, equal highs / lows) + sweep markers
@@ -662,20 +679,7 @@ var int   asiaT = na
 string bslHit = ""   // buy-side levels swept this bar (wick above, close back below)
 string sslHit = ""   // sell-side levels swept this bar (wick below, close back above)
 if liqOn and barstate.isconfirmed
-    // 1) Sweeps / breaks of existing levels
-    for q in liqs
-        if not q.done and bar_index > q.born and (q.up ? high > q.price : low < q.price)
-            bool grab = q.up ? close < q.price : close > q.price
-            q.done := true
-            q.ln.set_extend(extend.none)
-            q.ln.set_x2(time)
-            q.ln.set_color(color.new(liqCol, 65))
-            q.lb.delete()     // keep only the faded line; the $ marker tooltip names the level
-            if grab and q.up
-                bslHit := bslHit == "" ? q.name : bslHit + ", " + q.name
-            if grab and not q.up
-                sslHit := sslHit == "" ? q.name : sslHit + ", " + q.name
-    // 2) Daily / weekly levels
+    // 1) Daily / weekly levels
     if liqPD and newDayL and not na(pdh)
         expireLiq("PDH")
         expireLiq("PDL")
@@ -686,7 +690,7 @@ if liqOn and barstate.isconfirmed
         expireLiq("PWL")
         newLiq(pwh, time, true, "PWH", false)
         newLiq(pwl, time, false, "PWL", false)
-    // 3) Asian range: track during the session, publish when it ends
+    // 2) Asian range: track during the session, publish when it ends
     if liqAsia
         if inAsia and not inAsia[1]
             asiaH := high
@@ -700,7 +704,7 @@ if liqOn and barstate.isconfirmed
             expireLiq("Asia L")
             newLiq(asiaH, asiaT, true, "Asia H", false)
             newLiq(asiaL, asiaT, false, "Asia L", false)
-    // 4) Equal highs / lows: a new swing within tolerance of an earlier unswept swing
+    // 3) Equal highs / lows: a new swing within tolerance of an earlier unswept swing
     if liqEq
         float tol = eqTol * atrC
         int nh = eqHp.size()
@@ -749,19 +753,31 @@ if liqOn and barstate.isconfirmed
             if eqLp.size() > 20
                 eqLp.shift()
                 eqLt.shift()
+    // 4) Sweeps / breaks, after the new levels above: the first bar after the Asian session or a new day
+    //    (e.g. London open taking the Asia high) is checked against the levels it just received
+    for q in liqs
+        if not q.done and bar_index >= q.born and (q.up ? high > q.price : low < q.price)
+            bool grab = q.up ? close < q.price : close > q.price
+            q.done := true
+            q.ln.set_extend(extend.none)
+            q.ln.set_x2(time)
+            q.ln.set_color(color.new(liqCol, 65))
+            q.lb.delete()     // keep only the faded line; the $ marker tooltip names the level
+            if grab and q.up
+                bslHit := bslHit == "" ? q.name : bslHit + ", " + q.name
+            if grab and not q.up
+                sslHit := sslHit == "" ? q.name : sslHit + ", " + q.name
     // 5) Sweep markers
     if bslHit != "" and histOk
         histLabels.push(label.new(time, high, "$", xloc = xloc.bar_time, yloc = yloc.abovebar, style = label.style_none, textcolor = liqCol,
              size = size.small, tooltip = "Buy-side liquidity swept: " + bslHit))
-    if bslHit != ""
-        if alLiq
-            alert(syminfo.ticker + " swept buy-side liquidity (" + bslHit + ") @ " + fmt(high), alert.freq_once_per_bar_close)
+    if bslHit != "" and alLiq
+        pushEv(evKey, evTxt, "LB", "swept buy-side liquidity (" + bslHit + ") @ " + fmt(high))
     if sslHit != "" and histOk
         histLabels.push(label.new(time, low, "$", xloc = xloc.bar_time, yloc = yloc.belowbar, style = label.style_none, textcolor = liqCol,
              size = size.small, tooltip = "Sell-side liquidity swept: " + sslHit))
-    if sslHit != ""
-        if alLiq
-            alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
+    if sslHit != "" and alLiq
+        pushEv(evKey, evTxt, "LS", "swept sell-side liquidity (" + sslHit + ") @ " + fmt(low))
 
 if barstate.islast
     refreshDisplay()
@@ -811,7 +827,7 @@ if msShow
         histLabels.push(label.new(int(math.avg(sX, time)), sLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
              style = sMs > 0 ? label.style_label_down : label.style_label_up, size = size.tiny))
     if alMS
-        alert(syminfo.ticker + " " + (sMs > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(sLvl), alert.freq_once_per_bar)
+        pushEv(evKey, evTxt, "M", (sMs > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(sLvl))
 
 //==============================================================================
 // RSI DIVERGENCE (regular, chart timeframe)
@@ -877,7 +893,26 @@ if showDiv and barstate.isconfirmed
                 drawDiv(ref.t, ref.price, pt, divPH, false, bm)
         divKeep(divHighs, Piv.new(divPH, pr, pt, pb))
     if alDiv and divMsg != ""
-        alert(syminfo.ticker + " " + divMsg, alert.freq_once_per_bar_close)
+        pushEv(evKey, evTxt, "D", divMsg)
+
+//==============================================================================
+// NOTIFICATIONS: one alert() with every new event of this update
+//==============================================================================
+// alert.freq_all + a per-bar list of events already sent: each event reaches the phone exactly once, also when
+// several happen in the same bar (with alert.freq_once_per_bar only the first alert of a bar got through, so
+// e.g. a second zone entered a minute later in the same 5m bar was never notified)
+varip int    sentBar  = -1
+varip string sentKeys = ""
+if sentBar != bar_index
+    sentBar  := bar_index
+    sentKeys := ""
+string outMsg = ""
+for [i, k] in evKey
+    if not str.contains(sentKeys, "#" + k + "#")
+        sentKeys := sentKeys + "#" + k + "#"
+        outMsg   := joinMsg(outMsg, evTxt.get(i))
+if outMsg != ""
+    alert(syminfo.ticker + " " + fmt(close) + " " + outMsg, alert.freq_all)
 
 //==============================================================================
 // ALERT CONDITIONS
