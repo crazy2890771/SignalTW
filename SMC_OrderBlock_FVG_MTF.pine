@@ -34,13 +34,17 @@ int    swingLen    = input.int(5, "Swing length", minval = 2, maxval = 50, group
      tooltip = "จำนวนแท่งซ้าย/ขวาที่ใช้หา Swing High/Low สำหรับ Market Structure และ Order Block")
 
 bool   nearestOnly = input.bool(true, "Show only nearest zones", inline = "near", group = G_DISP)
-int    nearestN    = input.int(3, "", minval = 1, maxval = 20, inline = "near", group = G_DISP,
+int    nearestN    = input.int(2, "", minval = 1, maxval = 20, inline = "near", group = G_DISP,
      tooltip = "แสดงเฉพาะโซนที่ใกล้ราคาปัจจุบันที่สุด N โซน ต่อฝั่ง (แยก OB / FVG) จากทุก TF รวมกัน")
 bool   mergeTF     = input.bool(true, "Hide lower-TF zones inside higher-TF zones", group = G_DISP,
      tooltip = "ถ้าโซนของ TF เล็กซ้อนกับโซนประเภทเดียวกันของ TF ใหญ่ จะแสดงเฉพาะโซน TF ใหญ่ และเพิ่มชื่อ TF ในป้าย เช่น OB 4H+1H (Confluence)")
 bool   hideMit     = input.bool(true, "Hide mitigated zones", group = G_DISP,
      tooltip = "ซ่อนโซนที่ราคาเข้าไปใช้แล้ว (ถ้าปิด จะหยุดยืดโซนและทำให้จางลงแทน)")
 string lblSizeOpt  = input.string("Tiny", "Label size", options = ["Tiny", "Small", "Normal"], group = G_DISP)
+bool   fadeHTF     = input.bool(true, "Fade 4H / 1D zones", group = G_DISP,
+     tooltip = "โซนของ 4H จางลง และ 1D ขึ้นไปจางมาก เพื่อไม่ให้กล่องใหญ่บังแท่งเทียน (ป้ายชื่อยังชัดเหมือนเดิม)")
+bool   showCE      = input.bool(false, "50% line (mean threshold)", group = G_DISP,
+     tooltip = "เส้นประกลางโซน OB / FVG (Consequent Encroachment) จุดที่ราคามักตอบสนองเมื่อย่อเข้าโซน")
 int    histDays    = input.int(2, "History: CHoCH / BOS / swept liquidity (days)", minval = 0, group = G_DISP,
      tooltip = "แสดง CHoCH / BOS, เครื่องหมาย $ และแนว liquidity ที่ถูกกวาดแล้ว ย้อนหลังแค่กี่วัน (0 = แสดงทั้งหมด)\nแนว liquidity ที่ยังไม่ถูกกวาด และโซน OB / FVG ที่ยังใช้งานได้ จะแสดงเสมอ")
 
@@ -55,6 +59,8 @@ color  bullOBCol   = input.color(color.new(#089981, 80), "Bullish OB", inline = 
 color  bearOBCol   = input.color(color.new(#f23645, 80), "Bearish OB", inline = "obc", group = G_OB)
 
 bool   showFVG     = input.bool(true, "Show Fair Value Gaps", group = G_FVG)
+bool   fvgShrink   = input.bool(true, "Shrink FVG as it fills", group = G_FVG,
+     tooltip = "เมื่อราคาเข้าไปเติม FVG บางส่วน กล่องจะหดเหลือเฉพาะช่องว่างที่ยังไม่ถูกเติม และหายไปเมื่อถูกเติมเต็ม")
 int    maxFVG      = input.int(5, "Max FVG stored per TF / side", minval = 1, maxval = 50, group = G_FVG)
 float  fvgMinPct   = input.float(0.0, "Min gap size (%)", minval = 0, step = 0.01, group = G_FVG,
      tooltip = "กรอง FVG ที่เล็กกว่าเปอร์เซ็นต์นี้ของราคา (0 = แสดงทั้งหมด)")
@@ -132,11 +138,13 @@ type Zone
     bool   bull
     bool   isOB
     color  col
-    int    rank        // 0 = chart TF, 1..3 = HTF slot (higher = more important)
+    int    rank        // 0 = chart TF, 1..5 = HTF slot (higher = more important)
     string tag         // timeframe name, e.g. "4H"
     string lbl         // base label text, e.g. "OB 4H"
     int    born        // chart bar_index when the zone was drawn
     int    tfSec       // timeframe of the zone in seconds (for alerts)
+    line   ce          // 50% line (na when off)
+    int    bdT         // border transparency (higher TF = lighter)
     bool   mitigated = false
     bool   entered   = false   // price has traded into the zone at least once
 
@@ -262,29 +270,32 @@ tfName(simple string tf) =>
 
 sameKind(Zone a, bool bull, bool isOB) => a.bull == bull and a.isOB == isOB
 
+// Delete a zone's drawings
+killZone(Zone z) =>
+    z.bx.delete()
+    line.delete(z.ce)
+
 addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color c, int rank, string tag, int maxN, int tfSec) =>
-    float nTop  = top
-    float nBot  = bot
-    int   nLeft = t
-    // Overlapping active zone of the same kind on the same TF:
-    // FVGs are merged into one zone, an older OB is replaced by the newer one
+    // A newer OB replaces an overlapping older OB of the same TF (FVGs are kept separately)
     int n = zs.size()
-    if n > 0
+    if isOB and n > 0
         for i = n - 1 to 0
             Zone z = zs.get(i)
             if not z.mitigated and sameKind(z, bull, isOB) and z.top >= bot and z.bot <= top
-                if not isOB
-                    nTop  := math.max(nTop, z.top)
-                    nBot  := math.min(nBot, z.bot)
-                    nLeft := math.min(nLeft, z.left)
-                z.bx.delete()
                 zs.remove(i)
-    string lbl = (isOB ? "OB" : "FVG") + (rank > 0 ? " " + tag : "")
-    box bx = box.new(nLeft, nTop, time, nBot, xloc = xloc.bar_time, extend = extend.right,
-         border_color = color.new(c, 30), border_style = rank > 0 ? line.style_dashed : line.style_solid,
-         bgcolor = c, text = lbl, text_size = lblSize, text_color = color.new(c, 0),
+                killZone(z)
+    // Higher timeframes are drawn lighter so big zones do not hide the candles
+    int   fillT = not fadeHTF ? int(color.t(c)) : tfSec >= 86400 ? 94 : tfSec >= 14400 ? 88 : int(color.t(c))
+    int   bdT   = not fadeHTF ? 30 : tfSec >= 86400 ? 60 : tfSec >= 14400 ? 45 : 30
+    color fc    = color.new(c, fillT)
+    string lbl  = (isOB ? "OB" : "FVG") + (rank > 0 ? " " + tag : "")
+    box bx = box.new(t, top, time, bot, xloc = xloc.bar_time, extend = extend.right,
+         border_color = color.new(c, bdT), border_style = rank > 0 ? line.style_dashed : line.style_solid,
+         bgcolor = fc, text = lbl, text_size = lblSize, text_color = color.new(c, 0),
          text_halign = text.align_right, text_valign = rank > 0 ? text.align_top : text.align_bottom)
-    zs.unshift(Zone.new(bx, nTop, nBot, nLeft, bull, isOB, c, rank, tag, lbl, bar_index, tfSec))
+    line ce = showCE ? line.new(t, (top + bot) / 2, time, (top + bot) / 2, xloc = xloc.bar_time, extend = extend.right,
+         color = color.new(c, bdT), style = line.style_dotted) : na
+    zs.unshift(Zone.new(bx, top, bot, t, bull, isOB, fc, rank, tag, lbl, bar_index, tfSec, ce, bdT))
     // Keep at most maxN zones of this kind (newest first)
     array<int> drop = array.new<int>()
     int cnt = 0
@@ -297,7 +308,7 @@ addZone(array<Zone> zs, float top, float bot, int t, bool bull, bool isOB, color
     if d > 0
         for j = d - 1 to 0
             Zone old = zs.remove(drop.get(j))
-            old.bx.delete()
+            killZone(old)
 
 // Mitigation check (confirmed bars)
 updateZones(array<Zone> zs) =>
@@ -313,13 +324,26 @@ updateZones(array<Zone> zs) =>
                     z.mitigated := true
                     if hideMit
                         zs.remove(i)
-                        z.bx.delete()
+                        killZone(z)
                     else
                         z.bx.set_extend(extend.none)
                         z.bx.set_right(time)
                         z.bx.set_bgcolor(color.new(chart.fg_color, 92))
                         z.bx.set_border_color(color.new(chart.fg_color, 80))
                         z.bx.set_text_color(color.new(chart.fg_color, 60))
+                        line.delete(z.ce)
+                else if fvgShrink and not z.isOB and bar_index > z.born and (z.bull ? low < z.top : high > z.bot)
+                    // Partially filled FVG: keep only the part of the gap that is still open
+                    if z.bull
+                        z.top := low
+                        z.bx.set_top(low)
+                    else
+                        z.bot := high
+                        z.bx.set_bottom(high)
+                    if showCE
+                        float mid = (z.top + z.bot) / 2
+                        z.ce.set_y1(mid)
+                        z.ce.set_y2(mid)
     n
 
 fmt(float p) => str.tostring(p, format.mintick)
@@ -402,9 +426,11 @@ collect(array<Zone> src, array<Zone> dst) =>
 
 setVisible(Zone z, bool vis, string extra) =>
     z.bx.set_bgcolor(vis ? z.col : color(na))
-    z.bx.set_border_color(vis ? color.new(z.col, 30) : color(na))
+    z.bx.set_border_color(vis ? color.new(z.col, z.bdT) : color(na))
     z.bx.set_text_color(vis ? color.new(z.col, 0) : color(na))
     z.bx.set_text(z.lbl + extra)
+    if showCE
+        z.ce.set_color(vis ? color.new(z.col, z.bdT) : color(na))
 
 refreshDisplay() =>
     array<Zone> pool = array.new<Zone>()
@@ -672,9 +698,22 @@ if barstate.islast
                 Liq lq = liqs.get(i)
                 if lq.done and lq.ln.get_x2() < histCut
                     dropLiq(i)
+    array<Liq> act = array.new<Liq>()
     for q in liqs
         if not q.done
-            q.lb.set_x(time)
+            q.lb.set_x(time + 3 * chartSec * 1000)
+            q.lb.set_text(q.name)
+            act.push(q)
+    int na2 = act.size()
+    if na2 > 1
+        for i = 0 to na2 - 2
+            Liq a = act.get(i)
+            if a.lb.get_text() != ""
+                for j = i + 1 to na2 - 1
+                    Liq b = act.get(j)
+                    if b.lb.get_text() != "" and math.abs(a.price - b.price) < 0.15 * atrC
+                        a.lb.set_text(a.lb.get_text() + " · " + b.name)
+                        b.lb.set_text("")
 
 // Market structure (BOS / CHoCH) on chart timeframe
 bool msShow = msMode == "All" ? cms != 0 : msMode == "CHoCH only" ? math.abs(cms) == 2 : false
