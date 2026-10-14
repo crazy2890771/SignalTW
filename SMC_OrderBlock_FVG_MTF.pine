@@ -15,6 +15,7 @@ const string G_MS   = "Market Structure"
 const string G_ALRT = "Alerts (phone notifications)"
 const string G_LIQ  = "Liquidity"
 const string G_DASH = "Dashboard"
+const string G_DIV  = "RSI Divergence"
 
 bool   showChartTF = input.bool(true, "Chart TF (TF ปัจจุบันของกราฟ)", group = G_TF)
 string tfMode      = input.string("5m · 15m · 1H · 4H · 1D", "HTF set", options = ["5m · 15m · 1H · 4H · 1D", "Auto by chart TF", "Manual"], group = G_TF,
@@ -114,6 +115,19 @@ float  nearAtr     = input.float(2.0, "within x ATR", minval = 0.1, step = 0.5, 
      tooltip = "เตือนล่วงหน้าเมื่อราคาเข้าใกล้โซน OB / FVG ของ 1H, 4H, 1D (ตาม TF และประเภทที่ติ๊กไว้ด้านบน) ครั้งเดียวต่อโซน\nระยะ = x × ATR14 ของ TF ที่ตั้ง Alert (5m)\nเตือนเฉพาะเมื่อราคาเคยอยู่ไกลกว่าระยะนี้ก่อน โซนที่เกิดใกล้ราคาจะไม่เตือนทันที")
 bool   alTrend     = input.bool(true, "1H / 4H trend change", group = G_ALRT,
      tooltip = "แจ้งเตือนเมื่อเทรนด์ของ 1H หรือ 4H กลับทิศ (ช่องในตาราง Trend เปลี่ยนสี) แจ้งหลังแท่ง 1H / 4H ปิด")
+bool   showDiv     = input.bool(true, "Show RSI divergence", group = G_DIV,
+     tooltip = "Regular divergence บน TF ของกราฟ\nBull Div = ราคาทำ Low ต่ำลง แต่ RSI ทำ Low สูงขึ้น (แรงขายอ่อนลง)\nBear Div = ราคาทำ High สูงขึ้น แต่ RSI ทำ High ต่ำลง (แรงซื้ออ่อนลง)\nเส้นเชื่อม 2 จุดบนกราฟราคา แสดงย้อนหลังตาม History (days)")
+int    rsiLen      = input.int(14, "RSI length", minval = 2, group = G_DIV)
+int    divL        = input.int(5, "Pivot left", minval = 1, maxval = 20, inline = "dpv", group = G_DIV)
+int    divR        = input.int(3, "right", minval = 1, maxval = 20, inline = "dpv", group = G_DIV,
+     tooltip = "จำนวนแท่งซ้าย / ขวาที่ใช้ยืนยันจุด Low / High\nป้ายจะขึ้นหลังจุดนั้น right แท่ง (3 แท่งบน 5m = 15 นาที) ค่าน้อย = เร็วขึ้นแต่หลอกบ่อยขึ้น")
+int    divMax      = input.int(60, "Max bars between the 2 points", minval = 10, maxval = 200, group = G_DIV)
+bool   divZone     = input.bool(true, "Only from RSI below", inline = "dz", group = G_DIV)
+int    divLo       = input.int(40, "", minval = 1, maxval = 50, inline = "dz", group = G_DIV)
+int    divHi       = input.int(60, "/ above", minval = 50, maxval = 99, inline = "dz", group = G_DIV,
+     tooltip = "กรองเฉพาะ divergence ที่จุดแรกของ RSI อยู่ในโซนขายมาก / ซื้อมาก (Bull: RSI จุดแรก ≤ 40, Bear: RSI จุดแรก ≥ 60) ลดสัญญาณระหว่างที่ราคาแกว่งกลาง ๆ\nปิดเพื่อแสดงทุก divergence")
+bool   alDiv       = input.bool(false, "RSI divergence", group = G_ALRT,
+     tooltip = "แจ้งเตือนเมื่อเกิด Bull / Bear RSI divergence บน TF ที่ตั้ง Alert (5m) แจ้งตอนแท่งปิด")
 
 // Effective HTFs (fixed set, auto by chart TF, or manual)
 int    chartS   = timeframe.in_seconds(timeframe.period)
@@ -800,6 +814,61 @@ if msShow
         alert(syminfo.ticker + " " + (sMs > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(sLvl), alert.freq_once_per_bar)
 
 //==============================================================================
+// RSI DIVERGENCE (regular, chart timeframe)
+//==============================================================================
+// Price pivot vs the previous pivot of the same side: lower low + higher RSI = bullish, higher high + lower RSI = bearish
+float rsiV  = ta.rsi(close, rsiLen)
+float divPL = ta.pivotlow(low, divL, divR)
+float divPH = ta.pivothigh(high, divL, divR)
+var float dLoP = na
+var float dLoR = na
+var int   dLoT = na
+var int   dLoB = na
+var float dHiP = na
+var float dHiR = na
+var int   dHiT = na
+var int   dHiB = na
+
+drawDiv(int t1, float p1, int t2, float p2, bool bull, string tip) =>
+    color c = bull ? msBullCol : msBearCol
+    histLines.push(line.new(t1, p1, t2, p2, xloc = xloc.bar_time, color = c, width = 2))
+    histLabels.push(label.new(t2, p2, bull ? "Bull Div" : "Bear Div", xloc = xloc.bar_time, color = color(na), textcolor = c,
+         style = bull ? label.style_label_up : label.style_label_down, size = size.tiny, tooltip = tip))
+
+bool bullDiv = false
+bool bearDiv = false
+string divMsg = ""
+if showDiv and barstate.isconfirmed
+    int pb = bar_index - divR
+    int pt = time[divR]
+    float pr = rsiV[divR]
+    if not na(divPL)
+        int gap = pb - dLoB
+        if not na(dLoP) and gap >= 5 and gap <= divMax and divPL < dLoP and pr > dLoR and (not divZone or dLoR <= divLo)
+            bullDiv := true
+            divMsg  := "Bullish RSI divergence: price " + fmt(dLoP) + " → " + fmt(divPL) + ", RSI " + str.tostring(dLoR, "#.0") + " → " + str.tostring(pr, "#.0")
+            if histOk
+                drawDiv(dLoT, dLoP, pt, divPL, true, divMsg)
+        dLoP := divPL
+        dLoR := pr
+        dLoT := pt
+        dLoB := pb
+    if not na(divPH)
+        int gap = pb - dHiB
+        if not na(dHiP) and gap >= 5 and gap <= divMax and divPH > dHiP and pr < dHiR and (not divZone or dHiR >= divHi)
+            bearDiv := true
+            string bm = "Bearish RSI divergence: price " + fmt(dHiP) + " → " + fmt(divPH) + ", RSI " + str.tostring(dHiR, "#.0") + " → " + str.tostring(pr, "#.0")
+            divMsg  := joinMsg(divMsg, bm)
+            if histOk
+                drawDiv(dHiT, dHiP, pt, divPH, false, bm)
+        dHiP := divPH
+        dHiR := pr
+        dHiT := pt
+        dHiB := pb
+    if alDiv and divMsg != ""
+        alert(syminfo.ticker + " " + divMsg, alert.freq_once_per_bar_close)
+
+//==============================================================================
 // ALERT CONDITIONS
 //==============================================================================
 bool anyBull = cnb or cnbf or nBull1 or nBull2 or nBull3 or nBull4 or nBull5
@@ -812,6 +881,8 @@ alertcondition(bslHit != "", "Buy-side liquidity swept", "{{ticker}} swept buy-s
 alertcondition(sslHit != "", "Sell-side liquidity swept", "{{ticker}} swept sell-side liquidity (lows) @ {{low}}")
 alertcondition(msShow and sMs > 0, "Bullish BOS/CHoCH", "{{ticker}} Bullish structure break @ {{close}}")
 alertcondition(msShow and sMs < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish structure break @ {{close}}")
+alertcondition(bullDiv, "Bullish RSI divergence", "{{ticker}} Bullish RSI divergence @ {{close}}")
+alertcondition(bearDiv, "Bearish RSI divergence", "{{ticker}} Bearish RSI divergence @ {{close}}")
 
 //==============================================================================
 // DASHBOARD
