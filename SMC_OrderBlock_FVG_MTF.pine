@@ -107,6 +107,13 @@ string msTfOpt     = input.string("Auto", "CHoCH / BOS timeframe", options = ["A
      tooltip = "Auto = กราฟ 5m หรือเล็กกว่า ใช้ CHoCH / BOS ของ 15m (ป้ายเขียนว่า CHoCH 15m) ลดป้ายจากการแกว่งย่อย กราฟ TF อื่นใช้ TF ของกราฟ\nChart TF = ใช้ TF ของกราฟเสมอ (ป้ายเขียนว่า CHoCH)\nถ้าเลือก TF ที่ต่ำกว่าหรือเท่ากับกราฟ จะใช้ TF ของกราฟแทน")
 string dashStyle   = input.string("Compact", "Style", options = ["Compact", "Full"], group = G_DASH,
      tooltip = "Compact = แถวเดียว เช่น 5m ▼ | 15m ▼ | 1H ▼ | 4H ▲ | 1D ▼ (เหมาะกับมือถือ)\nFull = ตาราง TF / Trend")
+bool   dashFlip    = input.bool(true, "Show flip levels", group = G_DASH,
+     tooltip = "ราคาที่ต้องปิดผ่าน เทรนด์ของ TF นั้นจึงจะกลับทิศ (Swing ล่าสุดที่ต้องเบรก)\n> 4168.5 = ปิดเหนือ 4168.5 จะกลับเป็น Bullish\n< 4140.2 = ปิดต่ำกว่า 4140.2 จะกลับเป็น Bearish\n– = ยังไม่มี Swing ใหม่ให้ใช้เป็นจุดกลับทิศ")
+bool   alNear      = input.bool(true, "Price approaching a 1H / 4H / 1D zone", inline = "alnear", group = G_ALRT)
+float  nearAtr     = input.float(2.0, "within x ATR", minval = 0.1, step = 0.5, inline = "alnear", group = G_ALRT,
+     tooltip = "เตือนล่วงหน้าเมื่อราคาเข้าใกล้โซน OB / FVG ของ 1H, 4H, 1D (ตาม TF และประเภทที่ติ๊กไว้ด้านบน) ครั้งเดียวต่อโซน\nระยะ = x × ATR14 ของ TF ที่ตั้ง Alert (5m)\nเตือนเฉพาะเมื่อราคาเคยอยู่ไกลกว่าระยะนี้ก่อน โซนที่เกิดใกล้ราคาจะไม่เตือนทันที")
+bool   alTrend     = input.bool(true, "1H / 4H trend change", group = G_ALRT,
+     tooltip = "แจ้งเตือนเมื่อเทรนด์ของ 1H หรือ 4H กลับทิศ (ช่องในตาราง Trend เปลี่ยนสี) แจ้งหลังแท่ง 1H / 4H ปิด")
 
 // Effective HTFs (fixed set, auto by chart TF, or manual)
 int    chartS   = timeframe.in_seconds(timeframe.period)
@@ -152,13 +159,16 @@ type Zone
     int    bdT         // border transparency (higher TF = lighter)
     bool   mitigated = false
     bool   entered   = false   // price has traded into the zone at least once
+    bool   armed     = false   // price has been farther away than the approach distance
+    bool   near      = false   // approach alert already sent
 
 //==============================================================================
 // DETECTION (runs on any timeframe, also inside request.security)
 //==============================================================================
 // Returns: bull OB [flag, top, bottom, time], bear OB [...], bull FVG [...], bear FVG [...],
 //          structure (1 = bull BOS, 2 = bull CHoCH, -1 = bear BOS, -2 = bear CHoCH),
-//          broken level, broken level time, trend (1 / -1 / 0)
+//          broken level, broken level time, trend (1 / -1 / 0),
+//          flip level (swing a close must break to turn the trend, na if none yet)
 detect(int len, float minPct) =>
     var float swH      = na
     var int   swHBar   = na
@@ -251,20 +261,22 @@ detect(int len, float minPct) =>
     bool bullFVG = low > high[2] and close[1] > high[2] and (low - high[2]) / close * 100 >= minPct
     bool bearFVG = high < low[2] and close[1] < low[2] and (low[2] - high) / close * 100 >= minPct
 
+    float flip = trend > 0 ? (swLUsed ? na : swL) : trend < 0 ? (swHUsed ? na : swH) : na
+
     [bullOB, bullOBT, bullOBB, bullOBX,
      bearOB, bearOBT, bearOBB, bearOBX,
      bullFVG, low, high[2], time[2],
      bearFVG, low[2], high, time[2],
-     ms, msLvl, msX, trend]
+     ms, msLvl, msX, trend, flip]
 
 // Same as detect() but shifted one bar back -> used with lookahead_on for non-repainting HTF data
 detectConfirmed(int len, float minPct) =>
-    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] = detect(len, minPct)
-    [a1[1], a2[1], a3[1], a4[1], b1[1], b2[1], b3[1], b4[1], c1[1], c2[1], c3[1], c4[1], d1[1], d2[1], d3[1], d4[1], m1[1], m2[1], m3[1], t[1]]
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f] = detect(len, minPct)
+    [a1[1], a2[1], a3[1], a4[1], b1[1], b2[1], b3[1], b4[1], c1[1], c2[1], c3[1], c4[1], d1[1], d2[1], d3[1], d4[1], m1[1], m2[1], m3[1], t[1], f[1]]
 
 // Only the structure break of the last confirmed bar (for CHoCH / BOS of a higher timeframe)
 structConfirmed(int len) =>
-    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] = detect(len, 0.0)
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f] = detect(len, 0.0)
     [m1[1], m2[1], m3[1]]
 
 //==============================================================================
@@ -357,6 +369,8 @@ updateZones(array<Zone> zs) =>
     n
 
 fmt(float p) => str.tostring(p, format.mintick)
+// Short price text (1 decimal for prices like gold) for the dashboard and distances
+fmtS(float p) => close >= 1000 ? str.tostring(p, "#.0") : fmt(p)
 
 tfOk(int sec) => (sec == 300 and al5) or (sec == 900 and al15) or (sec == 3600 and al60) or (sec == 14400 and al240) or (sec == 86400 and alD)
 
@@ -376,6 +390,33 @@ checkEntry(array<Zone> zs) =>
     [bIn, sIn, msg]
 
 joinMsg(string a, string b) => a == "" ? b : b == "" ? a : a + " | " + b
+
+// Price coming within nearAtr x ATR of a 1H+ zone it has not reached yet.
+// Once per zone, and only after price was farther away (a zone born next to price does not alert at once).
+checkNear(array<Zone> zs) =>
+    string msg = ""
+    float  thr = nearAtr * atrC
+    for z in zs
+        if not z.mitigated and not z.entered and not z.near and z.tfSec >= 3600 and tfOk(z.tfSec) and (z.isOB ? alOB : alFVG)
+            float d = z.bull ? low - z.top : z.bot - high
+            if d > thr
+                z.armed := true
+            else if z.armed and d > 0
+                z.near := true
+                msg := msg + (msg == "" ? "" : " | ") + (z.bull ? "Bullish " : "Bearish ") + (z.isOB ? "OB " : "FVG ") + z.tag + " " +
+                     fmt(z.bot) + "–" + fmt(z.top) + " (" + fmtS(z.bull ? close - z.top : z.bot - close) + " away)"
+    msg
+
+// Trend of a 1H / 4H slot flipped on this bar (its first chart bar after the HTF close)
+trendFlipMsg(simple string tf, bool valid, int t, float f) =>
+    int   tPrev = t[1]
+    float fPrev = f[1]
+    int   s     = timeframe.in_seconds(tf)
+    string msg  = ""
+    if valid and (s == 3600 or s == 14400) and t != 0 and tPrev != 0 and t != tPrev
+        msg := tfName(tf) + " trend turned " + (t > 0 ? "Bullish" : "Bearish") +
+             (na(fPrev) ? "" : (t > 0 ? " (closed above " : " (closed below ") + fmtS(fPrev) + ")")
+    msg
 
 // Creates zones for one timeframe, returns [newBullOB, newBearOB, newBullFVG, newBearFVG]
 handleZones(bool isNew, int rank, string tag, int tfSec, array<Zone> zs,
@@ -408,13 +449,13 @@ handleZones(bool isNew, int rank, string tag, int tfSec, array<Zone> zs,
 var int chartSec = timeframe.in_seconds(timeframe.period)
 
 htfSlot(simple string tf, bool use, array<Zone> zs, int rank) =>
-    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] =
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t, f] =
          request.security(syminfo.tickerid, tf, detectConfirmed(swingLen, fvgMinPct), lookahead = barmerge.lookahead_on)
     bool valid = use and timeframe.in_seconds(tf) > chartSec
     bool isNew = valid and timeframe.change(tf)
     [nb, ns, nbf, nsf] = handleZones(isNew, rank, tfName(tf), timeframe.in_seconds(tf), zs,
          a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4)
-    [valid, t, nb or nbf, ns or nsf]
+    [valid, t, f, nb or nbf, ns or nsf]
 
 //==============================================================================
 // STATE
@@ -497,16 +538,16 @@ if barstate.isconfirmed
 
 // Chart timeframe
 string chartTag = tfName(timeframe.period)
-[ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, cms, cmsLvl, cmsX, cTrend] = detect(swingLen, fvgMinPct)
+[ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4, cms, cmsLvl, cmsX, cTrend, cFlip] = detect(swingLen, fvgMinPct)
 [cnb, cns, cnbf, cnsf] = handleZones(showChartTF and barstate.isconfirmed, 0, chartTag, chartSec, zC,
      ca1, ca2, ca3, ca4, cb1, cb2, cb3, cb4, cc1, cc2, cc3, cc4, cd1, cd2, cd3, cd4)
 
 // Higher timeframes
-[v1, t1, nBull1, nBear1] = htfSlot(eTf1, eUse1, zH1, 1)
-[v2, t2, nBull2, nBear2] = htfSlot(eTf2, eUse2, zH2, 2)
-[v3, t3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
-[v4, t4, nBull4, nBear4] = htfSlot(eTf4, eUse4, zH4, 4)
-[v5, t5, nBull5, nBear5] = htfSlot(eTf5, eUse5, zH5, 5)
+[v1, t1, f1, nBull1, nBear1] = htfSlot(eTf1, eUse1, zH1, 1)
+[v2, t2, f2, nBull2, nBear2] = htfSlot(eTf2, eUse2, zH2, 2)
+[v3, t3, f3, nBull3, nBear3] = htfSlot(eTf3, eUse3, zH3, 3)
+[v4, t4, f4, nBull4, nBear4] = htfSlot(eTf4, eUse4, zH4, 4)
+[v5, t5, f5, nBull5, nBear5] = htfSlot(eTf5, eUse5, zH5, 5)
 
 // Price entering a zone (every tick on realtime bars -> notification as soon as price reaches the zone)
 [eb0, es0, em0] = checkEntry(zC)
@@ -520,6 +561,19 @@ bool   enterBear = es0 or es1 or es2 or es3 or es4 or es5
 string enterMsg  = joinMsg(joinMsg(joinMsg(em0, em1), joinMsg(em2, em3)), joinMsg(em4, em5))
 if alEnter and enterMsg != ""
     alert(syminfo.ticker + " " + fmt(close) + " entered " + enterMsg, alert.freq_once_per_bar)
+
+// Price approaching a 1H / 4H / 1D zone (heads-up before it gets there)
+if alNear
+    string nearMsg = joinMsg(joinMsg(joinMsg(checkNear(zC), checkNear(zH1)), joinMsg(checkNear(zH2), checkNear(zH3))),
+         joinMsg(checkNear(zH4), checkNear(zH5)))
+    if nearMsg != ""
+        alert(syminfo.ticker + " " + fmt(close) + " approaching " + nearMsg, alert.freq_once_per_bar)
+
+// 1H / 4H trend change
+string trendMsg = joinMsg(joinMsg(trendFlipMsg(eTf1, v1, t1, f1), trendFlipMsg(eTf2, v2, t2, f2)),
+     joinMsg(trendFlipMsg(eTf3, v3, t3, f3), joinMsg(trendFlipMsg(eTf4, v4, t4, f4), trendFlipMsg(eTf5, v5, t5, f5))))
+if alTrend and trendMsg != ""
+    alert(syminfo.ticker + " " + fmt(close) + " " + trendMsg, alert.freq_once_per_bar)
 
 //==============================================================================
 // LIQUIDITY (PDH/PDL, PWH/PWL, Asia range, equal highs / lows) + sweep markers
@@ -762,17 +816,26 @@ alertcondition(msShow and sMs < 0, "Bearish BOS/CHoCH", "{{ticker}} Bearish stru
 //==============================================================================
 // DASHBOARD
 //==============================================================================
-// Compact: one row of "5m ▼" cells, Full: TF / Trend table (k = position of the TF, 0 = chart TF)
-trendCell(table tb, int k, string name, int tr, bool compact) =>
+// Compact: one row of "5m ▼" cells (flip level below), Full: TF / Trend / Flip table (k = position of the TF, 0 = chart TF)
+trendCell(table tb, int k, string name, int tr, float flip, bool compact) =>
     string arrow = tr > 0 ? "▲" : tr < 0 ? "▼" : "–"
     string word  = tr > 0 ? "Bullish" : tr < 0 ? "Bearish" : "Neutral"
     color  c     = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray
+    bool   hasF  = tr != 0 and not na(flip)
+    string fTxt  = hasF ? (tr > 0 ? "< " : "> ") + fmtS(flip) : "–"
+    string fDist = hasF ? " (" + (flip >= close ? "+" : "") + fmtS(flip - close) + ")" : ""
+    string fTip  = hasF ? "Close " + (tr > 0 ? "below " : "above ") + fmtS(flip) + " turns " + name + (tr > 0 ? " Bearish" : " Bullish") + fDist :
+         "No new swing yet to turn the " + name + " trend"
     if compact
         tb.cell(k, 0, name + " " + arrow, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small,
              tooltip = name + " trend: " + word)
+        if dashFlip
+            tb.cell(k, 1, fTxt, text_color = chart.fg_color, text_size = size.tiny, tooltip = fTip)
     else
         tb.cell(0, k + 1, name + (k == 0 ? " (chart)" : ""), text_color = chart.fg_color, text_size = size.small)
         tb.cell(1, k + 1, arrow + " " + word, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small)
+        if dashFlip
+            tb.cell(2, k + 1, fTxt + fDist, text_color = chart.fg_color, text_size = size.small, tooltip = fTip)
 
 if showDash and barstate.islast
     string p = dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Right" ? position.bottom_right :
@@ -784,20 +847,22 @@ if showDash and barstate.islast
     if not cmp
         tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
         tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
+        if dashFlip
+            tb.cell(2, 0, "Flip at", text_color = chart.fg_color, text_size = size.small)
     int k = 0
-    trendCell(tb, k, chartTag, cTrend, cmp)
+    trendCell(tb, k, chartTag, cTrend, cFlip, cmp)
     if v1
         k += 1
-        trendCell(tb, k, tfName(eTf1), t1, cmp)
+        trendCell(tb, k, tfName(eTf1), t1, f1, cmp)
     if v2
         k += 1
-        trendCell(tb, k, tfName(eTf2), t2, cmp)
+        trendCell(tb, k, tfName(eTf2), t2, f2, cmp)
     if v3
         k += 1
-        trendCell(tb, k, tfName(eTf3), t3, cmp)
+        trendCell(tb, k, tfName(eTf3), t3, f3, cmp)
     if v4
         k += 1
-        trendCell(tb, k, tfName(eTf4), t4, cmp)
+        trendCell(tb, k, tfName(eTf4), t4, f4, cmp)
     if v5
         k += 1
-        trendCell(tb, k, tfName(eTf5), t5, cmp)
+        trendCell(tb, k, tfName(eTf5), t5, f5, cmp)
