@@ -13,6 +13,7 @@
 | **Multi-Timeframe** | โซนของ TF กราฟ + HTF ได้สูงสุด 5 TF (ค่าเริ่มต้น 5m · 15m · 1H · 4H · 1D) ป้ายบอก TF เช่น `OB 4H`, `FVG 1H` (เส้นขอบประ) |
 | **ไม่ Repaint** | ข้อมูล HTF ใช้เฉพาะแท่งที่ปิดแล้ว ส่วน TF กราฟวาดเมื่อแท่งปิด |
 | **ลดความรก** | แสดงเฉพาะโซนที่ใกล้ราคาที่สุด, รวมโซน TF เล็กที่ซ้อนในโซน TF ใหญ่เป็นป้ายเดียว (เช่น `OB 4H+1H`), จำกัดความหนา OB ตาม ATR, ซ่อนโซนที่ถูกใช้แล้ว |
+| **BUY / SELL** | H1 Bias → CHoCH / BOS บน TF กราฟ → OB + FVG ของขาที่เบรก → รอราคาย่อกลับมาแตะโซนและมีแท่งตอบสนอง พร้อม Entry / SL / TP (1:2) |
 | **Dashboard** | ตารางเทรนด์ของแต่ละ TF |
 | **Alerts / แจ้งเตือนมือถือ** | แจ้งเตือนเมื่อราคาเข้าโซน OB/FVG ของ 5m, 15m, 1H, 4H, 1D (ครั้งเดียวต่อโซน) และเลือกเพิ่มได้: OB/FVG ใหม่, CHoCH/BOS, กวาด liquidity |
 
@@ -45,6 +46,33 @@
 - หลังแก้ Settings ของ indicator ต้องลบ Alert เดิมแล้วสร้างใหม่ เพราะ Alert จำค่าตอนที่สร้างไว้
 - แพ็กเกจฟรีของ TradingView จำกัดจำนวน Alert และ Alert มีวันหมดอายุ (ตั้งได้ตอนสร้าง) วิธีนี้ใช้ Alert เดียวครอบคลุมทุก TF
 
+## BUY / SELL
+
+ใช้กับกราฟ **5m** (ค่าเริ่มต้น Bias = 1H) ลำดับของ BUY (SELL กลับด้าน):
+
+| ขั้น | เงื่อนไข |
+|---|---|
+| 1. **H1 Bullish Bias** | เทรนด์ 1H เป็นขาขึ้น (ดูได้ในตารางเทรนด์) |
+| 2. **M5 Bullish CHoCH** | โครงสร้างระยะสั้นเปลี่ยนเป็นขาขึ้น |
+| 3. **Bullish BOS** | ราคาเบรก Swing High ถัดไป ยืนยันขาขึ้น |
+| 4. **OB + FVG** | OB ของขาที่เบรก + FVG ที่เกิดในขานั้น ถ้าซ้อนกันจะรวมเป็นโซนเดียว แสดงเป็นกล่องเส้นประ `BUY zone · wait retest` |
+| 5. **Retest → BUY** | ราคาย่อกลับมาแตะโซน แล้วปิดเป็นแท่งเขียว หรือมีไส้ล่างยาว (≥ 50% ของแท่ง) → **BUY ที่ราคาปิด** |
+
+- **SL** = ใต้จุดต่ำสุดของขาที่เบรก (จุดที่ถ้าหลุด โครงสร้างเสีย) − 0.1 ATR, **TP** = R:R 1:2
+- setup ถูกยกเลิกเมื่อ: ราคาปิดหลุด SL, โครงสร้างกลับด้าน (CHoCH/BOS ฝั่งตรงข้าม) หรือรอเกิน 48 แท่ง
+- ไม่เข้าเทรดเพียงเพราะราคาแตะโซน ต้องมีแท่งตอบสนองและ Bias ต้องตรงทิศ
+- สัญญาณเกิดเมื่อแท่งปิดเท่านั้น (ไม่ repaint) เอาเมาส์ชี้ป้ายเพื่อดู Entry / SL / TP / โซน
+
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|---|---|
+| Bias TF | 1H | TF ที่ใช้ดูทิศทางหลัก |
+| Structure confirmation | CHoCH → BOS | ต้องมี CHoCH ก่อนแล้วรอ BOS (BOS ต่อ ๆ ไปในเทรนด์เดียวกันใช้ได้) หรือ `CHoCH or BOS` = ใช้การเบรกครั้งไหนก็ได้ (สัญญาณมากขึ้น เสี่ยงขึ้น) |
+| Require FVG in the impulse | เปิด | ขาที่เบรกต้องทิ้ง FVG ไว้ |
+| R:R / SL buffer | 2.0 / 0.1 ATR | |
+| Wait for retest | 48 แท่ง | 5m = 4 ชั่วโมง |
+
+แจ้งเตือน: Alert แบบ `Any alert() function call` ตัวเดิมจะส่ง BUY / SELL พร้อม Entry / SL / TP ด้วย (ปิดได้ที่ `BUY / SELL signals` ในกลุ่ม Alerts) หรือสร้าง Alert แยกด้วย Condition `BUY signal` / `SELL signal`
+
 ## Liquidity
 
 แนวที่มี stop order กองอยู่ ราคามักวิ่งไปกวาดก่อนกลับตัว (เฉพาะกราฟ intraday)
@@ -63,7 +91,7 @@
 กด **Create Alert** → Condition เลือก `SignalTW OB/FVG` แล้วเลือก
 
 - **Any alert() function call**: ข้อความละเอียด (ระบุ TF, ช่วงราคาของโซน, ชื่อแนว liquidity) ตามที่เปิดไว้ในกลุ่ม Alerts
-- หรือเงื่อนไขเฉพาะ: `Price entered Bullish OB/FVG`, `Price entered Bearish OB/FVG`, `New Bullish OB/FVG (any TF)`, `New Bearish OB/FVG (any TF)`, `Bullish BOS/CHoCH`, `Bearish BOS/CHoCH`, `Buy-side liquidity swept`, `Sell-side liquidity swept`
+- หรือเงื่อนไขเฉพาะ: `BUY signal`, `SELL signal`, `Price entered Bullish OB/FVG`, `Price entered Bearish OB/FVG`, `New Bullish OB/FVG (any TF)`, `New Bearish OB/FVG (any TF)`, `Bullish BOS/CHoCH`, `Bearish BOS/CHoCH`, `Buy-side liquidity swept`, `Sell-side liquidity swept`
 
 ## การตั้งค่าที่สำคัญ
 

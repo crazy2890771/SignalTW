@@ -12,6 +12,7 @@ const string G_DISP = "Display (ลดความรก)"
 const string G_OB   = "Order Block"
 const string G_FVG  = "Fair Value Gap"
 const string G_MS   = "Market Structure"
+const string G_SIG  = "BUY / SELL signals"
 const string G_ALRT = "Alerts (phone notifications)"
 const string G_LIQ  = "Liquidity"
 const string G_DASH = "Dashboard"
@@ -78,6 +79,26 @@ int    eqLen       = input.int(5, "EQ swing length", minval = 2, maxval = 20, in
 int    maxEq       = input.int(6, "max EQ levels", minval = 1, maxval = 30, inline = "eq2", group = G_LIQ)
 color  liqCol      = input.color(#ab47bc, "Liquidity color", group = G_LIQ)
 
+bool   showSig     = input.bool(true, "Show BUY / SELL signals", group = G_SIG,
+     tooltip = "BUY: 1) เทรนด์ Bias TF (ค่าเริ่มต้น 1H) เป็นขาขึ้น → 2) TF กราฟเกิด CHoCH ขาขึ้น → 3) BOS ขาขึ้นยืนยัน → 4) ได้ OB ของขาที่เบรก (+ FVG ที่เกิดในขานั้น) → 5) ราคาย่อกลับมาแตะโซนแล้วมีแท่งตอบสนอง (แท่งเขียว หรือไส้ล่างยาว) = BUY ที่ราคาปิด\nSL ใต้จุดต่ำสุดของขา (จุดที่ถ้าหลุดโครงสร้างเสีย), TP ตาม R:R\nSELL กลับด้าน · แนะนำใช้กราฟ 5m")
+string biasTf      = input.timeframe("60", "Bias TF", group = G_SIG,
+     tooltip = "TF ที่ใช้ดูทิศทางหลัก (ค่าเริ่มต้น 1H) BUY เฉพาะเมื่อขาขึ้น, SELL เฉพาะเมื่อขาลง (ถ้าไม่สูงกว่า TF กราฟ จะใช้เทรนด์ของกราฟ)")
+string sigConfirm  = input.string("CHoCH → BOS", "Structure confirmation", options = ["CHoCH → BOS", "CHoCH or BOS"], group = G_SIG,
+     tooltip = "CHoCH → BOS = ต้องมี CHoCH เปลี่ยนเทรนด์ของกราฟก่อน แล้วรอ BOS ยืนยัน (BOS ต่อ ๆ ไปในเทรนด์เดียวกันก็ใช้ได้)\nCHoCH or BOS = ใช้การเบรกครั้งไหนก็ได้ รวม CHoCH ครั้งแรก (สัญญาณมากขึ้น เร็วขึ้น แต่เสี่ยงกว่า)")
+bool   needFvg     = input.bool(true, "Require FVG in the impulse", group = G_SIG,
+     tooltip = "ขาที่เบรกโครงสร้างต้องทิ้ง FVG ไว้ (แรงจริง) ถ้า FVG ซ้อนหรือติดกับ OB โซนรอเข้าจะรวมทั้ง OB และ FVG")
+float  sigRR       = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "rr", group = G_SIG)
+float  slBufAtr    = input.float(0.1, "SL buffer x ATR", minval = 0, step = 0.05, inline = "rr", group = G_SIG,
+     tooltip = "TP = Entry ± R:R × (Entry − SL), SL = จุดต่ำสุด/สูงสุดของขา ± buffer")
+int    setupBars   = input.int(48, "Wait for retest (bars)", minval = 3, maxval = 500, group = G_SIG,
+     tooltip = "รอราคาย่อกลับมาที่โซนได้นานสุดกี่แท่ง (กราฟ 5m: 48 แท่ง = 4 ชั่วโมง) setup จะถูกยกเลิกก่อนถ้าราคาปิดหลุด SL หรือโครงสร้างกลับด้าน")
+bool   showSetup   = input.bool(true, "Show waiting zone", inline = "sshow", group = G_SIG)
+bool   showLevels  = input.bool(true, "Entry / SL / TP lines", inline = "sshow", group = G_SIG)
+color  buyCol      = input.color(#089981, "BUY", inline = "sigc", group = G_SIG)
+color  sellCol     = input.color(#f23645, "SELL", inline = "sigc", group = G_SIG)
+
+bool   alSig       = input.bool(true, "BUY / SELL signals", group = G_ALRT,
+     tooltip = "แจ้งเตือนเมื่อเกิดสัญญาณ BUY / SELL พร้อม Entry / SL / TP")
 bool   alEnter     = input.bool(true, "Price enters an OB / FVG zone", group = G_ALRT,
      tooltip = "แจ้งเตือนครั้งแรกที่ราคาเข้าโซน (ครั้งเดียวต่อโซน) ระบุ TF, ประเภท และช่วงราคาของโซน\nตั้ง Alert: Condition = SignalTW → Any alert() function call แล้วเปิด Notify in app\nต้องสร้าง Alert บนกราฟ 5m (หรือเล็กกว่า) จึงจะได้โซน 5m ด้วย")
 bool   al5         = input.bool(true, "5m", inline = "altf", group = G_ALRT)
@@ -650,6 +671,135 @@ if liqOn and barstate.isconfirmed
         if alLiq
             alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
 
+//==============================================================================
+// BUY / SELL: HTF bias -> chart-TF CHoCH / BOS -> OB (+ FVG) of the impulse -> retest with a reaction
+//==============================================================================
+biasTrendFn(int len) =>
+    [a1, a2, a3, a4, b1, b2, b3, b4, c1, c2, c3, c4, d1, d2, d3, d4, m1, m2, m3, t] = detect(len, fvgMinPct)
+    t[1]
+
+int  htfBiasT = request.security(syminfo.tickerid, biasTf, biasTrendFn(swingLen), lookahead = barmerge.lookahead_on)
+bool biasOn   = timeframe.in_seconds(biasTf) > chartSec
+int  bias     = biasOn ? htfBiasT : cTrend
+string biasName = biasOn ? tfName(biasTf) : chartTag
+
+// Lowest low (bull) / highest high (bear) from the OB candle to now = the structure point of the impulse leg
+legExtreme(bool bull, int fromTime) =>
+    float ext = bull ? low : high
+    for i = 1 to 300
+        if na(time[i]) or time[i] < fromTime
+            break
+        ext := bull ? math.min(ext, low[i]) : math.max(ext, high[i])
+    ext
+
+// Latest FVG on the chart TF (to check that the impulse left one)
+var float lbFvgT = na
+var float lbFvgB = na
+var int   lbFvgX = na
+var float lsFvgT = na
+var float lsFvgB = na
+var int   lsFvgX = na
+if cc1
+    lbFvgT := cc2
+    lbFvgB := cc3
+    lbFvgX := cc4
+if cd1
+    lsFvgT := cd2
+    lsFvgB := cd3
+    lsFvgX := cd4
+
+// Armed setups waiting for the retest
+var bool  bSet    = false
+var int   bSetBar = na
+var float bPoiT   = na
+var float bPoiB   = na
+var float bSL     = na
+var box   bBox    = na
+var bool  sSet    = false
+var int   sSetBar = na
+var float sPoiT   = na
+var float sPoiB   = na
+var float sSL     = na
+var box   sBox    = na
+var line  enLine  = na
+var line  slLine  = na
+var line  tpLine  = na
+
+bool buySig  = false
+bool sellSig = false
+if showSig and barstate.isconfirmed
+    // 1) Invalidate: closed through the stop, structure flipped, or waited too long
+    if bSet and (close < bSL or cms < 0 or bar_index - bSetBar > setupBars)
+        bSet := false
+        box.delete(bBox)
+    if sSet and (close > sSL or cms > 0 or bar_index - sSetBar > setupBars)
+        sSet := false
+        box.delete(sBox)
+    // 2) Retest of the zone with a reaction candle, in the direction of the bias
+    bool bullReact = close > open or math.min(open, close) - low >= 0.5 * (high - low)
+    bool bearReact = close < open or high - math.max(open, close) >= 0.5 * (high - low)
+    if bSet and bar_index > bSetBar and low <= bPoiT and close > bPoiB and bullReact and bias > 0 and close > bSL
+        buySig := true
+    if sSet and bar_index > sSetBar and high >= sPoiB and close < sPoiT and bearReact and bias < 0 and close < sSL
+        sellSig := true
+    if buySig and sellSig
+        buySig  := false
+        sellSig := false
+    if buySig or sellSig
+        bool   isBuy = buySig
+        float  entry = close
+        float  sl    = isBuy ? bSL : sSL
+        float  risk  = math.abs(entry - sl)
+        float  tp    = isBuy ? entry + sigRR * risk : entry - sigRR * risk
+        string side  = isBuy ? "BUY" : "SELL"
+        string zone  = isBuy ? fmt(bPoiB) + " – " + fmt(bPoiT) : fmt(sPoiB) + " – " + fmt(sPoiT)
+        string tip   = side + "\nEntry: " + fmt(entry) + "\nSL: " + fmt(sl) + "\nTP: " + fmt(tp) + " (R:R 1:" + str.tostring(sigRR) + ")" +
+             "\nBias " + biasName + ": " + (bias > 0 ? "Bullish" : "Bearish") + "\nZone: " + zone
+        label.new(bar_index, close, side, yloc = isBuy ? yloc.belowbar : yloc.abovebar, color = isBuy ? buyCol : sellCol,
+             textcolor = color.white, style = isBuy ? label.style_label_up : label.style_label_down, size = size.small, tooltip = tip)
+        if showLevels
+            line.delete(enLine)
+            line.delete(slLine)
+            line.delete(tpLine)
+            enLine := line.new(bar_index, entry, bar_index + 20, entry, color = chart.fg_color, style = line.style_dotted)
+            slLine := line.new(bar_index, sl, bar_index + 20, sl, color = sellCol, width = 2)
+            tpLine := line.new(bar_index, tp, bar_index + 20, tp, color = buyCol, width = 2)
+        if alSig
+            alert(syminfo.ticker + " " + side + " @ " + fmt(entry) + " | SL " + fmt(sl) + " | TP " + fmt(tp) + " | zone " + zone, alert.freq_once_per_bar_close)
+        if isBuy
+            bSet := false
+            box.delete(bBox)
+        else
+            sSet := false
+            box.delete(sBox)
+    // 3) Arm a new setup on a confirming break (replaces an older one on the same side)
+    bool bullBreak = sigConfirm == "CHoCH → BOS" ? cms == 1 : cms > 0
+    bool bearBreak = sigConfirm == "CHoCH → BOS" ? cms == -1 : cms < 0
+    bool bFvgOk    = not na(lbFvgX) and lbFvgX >= ca4
+    bool sFvgOk    = not na(lsFvgX) and lsFvgX >= cb4
+    if bullBreak and ca1 and (bFvgOk or not needFvg)
+        bSet    := true
+        bSetBar := bar_index
+        bPoiB   := ca3
+        bPoiT   := bFvgOk and lbFvgB <= ca2 ? math.max(ca2, lbFvgT) : ca2
+        bSL     := legExtreme(true, ca4) - slBufAtr * atrC
+        box.delete(bBox)
+        if showSetup
+            bBox := box.new(ca4, bPoiT, time, bPoiB, xloc = xloc.bar_time, extend = extend.right, border_color = buyCol,
+                 border_style = line.style_dotted, bgcolor = color.new(buyCol, 92), text = "BUY zone · wait retest",
+                 text_size = size.tiny, text_color = buyCol, text_halign = text.align_left, text_valign = text.align_top)
+    if bearBreak and cb1 and (sFvgOk or not needFvg)
+        sSet    := true
+        sSetBar := bar_index
+        sPoiT   := cb2
+        sPoiB   := sFvgOk and lsFvgT >= cb3 ? math.min(cb3, lsFvgB) : cb3
+        sSL     := legExtreme(false, cb4) + slBufAtr * atrC
+        box.delete(sBox)
+        if showSetup
+            sBox := box.new(cb4, sPoiT, time, sPoiB, xloc = xloc.bar_time, extend = extend.right, border_color = sellCol,
+                 border_style = line.style_dotted, bgcolor = color.new(sellCol, 92), text = "SELL zone · wait retest",
+                 text_size = size.tiny, text_color = sellCol, text_halign = text.align_left, text_valign = text.align_bottom)
+
 if barstate.islast
     refreshDisplay()
     for q in liqs
@@ -674,6 +824,8 @@ bool anyBull = cnb or cnbf or nBull1 or nBull2 or nBull3 or nBull4 or nBull5
 bool anyBear = cns or cnsf or nBear1 or nBear2 or nBear3 or nBear4 or nBear5
 alertcondition(anyBull, "New Bullish OB/FVG (any TF)", "{{ticker}} new Bullish Order Block / FVG")
 alertcondition(anyBear, "New Bearish OB/FVG (any TF)", "{{ticker}} new Bearish Order Block / FVG")
+alertcondition(buySig, "BUY signal", "{{ticker}} BUY @ {{close}}")
+alertcondition(sellSig, "SELL signal", "{{ticker}} SELL @ {{close}}")
 alertcondition(enterBull, "Price entered Bullish OB/FVG", "{{ticker}} price entered a Bullish OB/FVG zone @ {{close}}")
 alertcondition(enterBear, "Price entered Bearish OB/FVG", "{{ticker}} price entered a Bearish OB/FVG zone @ {{close}}")
 alertcondition(bslHit != "", "Buy-side liquidity swept", "{{ticker}} swept buy-side liquidity (highs) @ {{high}}")
