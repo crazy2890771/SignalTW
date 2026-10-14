@@ -596,9 +596,7 @@ if liqOn and barstate.isconfirmed
             q.ln.set_extend(extend.none)
             q.ln.set_x2(time)
             q.ln.set_color(color.new(liqCol, 65))
-            q.lb.set_x(time)
-            q.lb.set_text(q.name + (grab ? " swept" : " taken"))
-            q.lb.set_textcolor(color.new(liqCol, 50))
+            q.lb.delete()     // keep only the faded line; the $ marker tooltip names the level
             if grab and q.up
                 bslHit := bslHit == "" ? q.name : bslHit + ", " + q.name
             if grab and not q.up
