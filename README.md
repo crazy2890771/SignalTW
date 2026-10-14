@@ -52,7 +52,7 @@
 
 | ขั้น | เงื่อนไข |
 |---|---|
-| 1. **H1 Bullish Bias** | เทรนด์ 1H เป็นขาขึ้น (ดูได้ในตารางเทรนด์) |
+| 1. **H1 Bullish Bias + Demand Zone** | เทรนด์ 1H เป็นขาขึ้น (ดูได้ในตารางเทรนด์) และโซนรอเข้าบน 5m ต้องซ้อนกับ Bullish OB / FVG ของ 1H ขึ้นไป (ปิดได้ที่ `Require Bias-TF zone`) |
 | 2. **M5 Bullish CHoCH** | โครงสร้างระยะสั้นเปลี่ยนเป็นขาขึ้น |
 | 3. **Bullish BOS** | ราคาเบรก Swing High ถัดไป ยืนยันขาขึ้น |
 | 4. **OB + FVG** | OB ของขาที่เบรก + FVG ที่เกิดในขานั้น ถ้าซ้อนกันจะรวมเป็นโซนเดียว แสดงเป็นกล่องเส้นประ `BUY zone · wait retest` |
@@ -67,6 +67,7 @@
 |---|---|---|
 | Bias TF | 1H | TF ที่ใช้ดูทิศทางหลัก |
 | Structure confirmation | CHoCH → BOS | ต้องมี CHoCH ก่อนแล้วรอ BOS (BOS ต่อ ๆ ไปในเทรนด์เดียวกันใช้ได้) หรือ `CHoCH or BOS` = ใช้การเบรกครั้งไหนก็ได้ (สัญญาณมากขึ้น เสี่ยงขึ้น) |
+| Require Bias-TF zone (H1 demand / supply) | เปิด | BUY ต้องเกิดในโซน Bullish ของ 1H / 4H / 1D, SELL ในโซน Bearish |
 | Require FVG in the impulse | เปิด | ขาที่เบรกต้องทิ้ง FVG ไว้ |
 | R:R / SL buffer | 2.0 / 0.1 ATR | |
 | Wait for retest | 48 แท่ง | 5m = 4 ชั่วโมง |

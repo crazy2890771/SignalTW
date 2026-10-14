@@ -86,6 +86,8 @@ string biasTf      = input.timeframe("60", "Bias TF", group = G_SIG,
      tooltip = "TF ที่ใช้ดูทิศทางหลัก (ค่าเริ่มต้น 1H) BUY เฉพาะเมื่อขาขึ้น, SELL เฉพาะเมื่อขาลง (ถ้าไม่สูงกว่า TF กราฟ จะใช้เทรนด์ของกราฟ)")
 string sigConfirm  = input.string("CHoCH → BOS", "Structure confirmation", options = ["CHoCH → BOS", "CHoCH or BOS"], group = G_SIG,
      tooltip = "CHoCH → BOS = ต้องมี CHoCH เปลี่ยนเทรนด์ของกราฟก่อน แล้วรอ BOS ยืนยัน (BOS ต่อ ๆ ไปในเทรนด์เดียวกันก็ใช้ได้)\nCHoCH or BOS = ใช้การเบรกครั้งไหนก็ได้ รวม CHoCH ครั้งแรก (สัญญาณมากขึ้น เร็วขึ้น แต่เสี่ยงกว่า)")
+bool   needHtfZone = input.bool(true, "Require Bias-TF zone (H1 demand / supply)", group = G_SIG,
+     tooltip = "ขั้นที่ 1 ของ logic: BUY เฉพาะเมื่อโซนรอเข้าบนกราฟซ้อนกับ Bullish OB / FVG ของ Bias TF ขึ้นไป (1H, 4H, 1D) ที่ยังไม่ถูกใช้ SELL ต้องซ้อนกับ Bearish OB / FVG\nสัญญาณน้อยลง แต่ไม่เข้าเทรดที่โซนเล็กกลางกรอบ")
 bool   needFvg     = input.bool(true, "Require FVG in the impulse", group = G_SIG,
      tooltip = "ขาที่เบรกโครงสร้างต้องทิ้ง FVG ไว้ (แรงจริง) ถ้า FVG ซ้อนหรือติดกับ OB โซนรอเข้าจะรวมทั้ง OB และ FVG")
 float  sigRR       = input.float(2.0, "R:R", minval = 0.5, step = 0.5, inline = "rr", group = G_SIG)
@@ -691,6 +693,20 @@ bool biasOn   = timeframe.in_seconds(biasTf) > chartSec
 int  bias     = biasOn ? htfBiasT : cTrend
 string biasName = biasOn ? tfName(biasTf) : chartTag
 
+// Step 1 zone check: does the waiting zone overlap an active same-side OB / FVG of the bias TF or higher?
+anyOverlap(array<Zone> zs, bool bull, float top, float bot, int minSec) =>
+    bool hit = false
+    for z in zs
+        if not z.mitigated and z.bull == bull and z.tfSec >= minSec and z.top >= bot and z.bot <= top
+            hit := true
+    hit
+
+htfZoneOk(bool bull, float top, float bot) =>
+    int minSec = biasOn ? timeframe.in_seconds(biasTf) : chartSec
+    not needHtfZone or anyOverlap(zC, bull, top, bot, minSec) or anyOverlap(zH1, bull, top, bot, minSec) or
+         anyOverlap(zH2, bull, top, bot, minSec) or anyOverlap(zH3, bull, top, bot, minSec) or
+         anyOverlap(zH4, bull, top, bot, minSec) or anyOverlap(zH5, bull, top, bot, minSec)
+
 // Lowest low (bull) / highest high (bear) from the OB candle to now = the structure point of the impulse leg
 legExtreme(bool bull, int fromTime) =>
     float ext = bull ? low : high
@@ -798,9 +814,9 @@ if showSig and barstate.isconfirmed
     bool bullReact = close > open or math.min(open, close) - low >= 0.5 * (high - low)
     bool bearReact = close < open or high - math.max(open, close) >= 0.5 * (high - low)
     if bSet and bar_index > bSetBar and low <= bPoiT and close > bPoiB and bullReact and bias > 0 and close > bSL
-        buySig := true
+        buySig := htfZoneOk(true, bPoiT, bPoiB)
     if sSet and bar_index > sSetBar and high >= sPoiB and close < sPoiT and bearReact and bias < 0 and close < sSL
-        sellSig := true
+        sellSig := htfZoneOk(false, sPoiT, sPoiB)
     if buySig and sellSig
         buySig  := false
         sellSig := false
