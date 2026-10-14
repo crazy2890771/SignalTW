@@ -43,6 +43,8 @@ bool   mergeTF     = input.bool(true, "Hide lower-TF zones inside higher-TF zone
 bool   hideMit     = input.bool(true, "Hide mitigated zones", group = G_DISP,
      tooltip = "ซ่อนโซนที่ราคาเข้าไปใช้แล้ว (ถ้าปิด จะหยุดยืดโซนและทำให้จางลงแทน)")
 string lblSizeOpt  = input.string("Tiny", "Label size", options = ["Tiny", "Small", "Normal"], group = G_DISP)
+int    histDays    = input.int(2, "History: CHoCH / BOS / swept liquidity (days)", minval = 0, group = G_DISP,
+     tooltip = "แสดง CHoCH / BOS, เครื่องหมาย $ และแนว liquidity ที่ถูกกวาดแล้ว ย้อนหลังแค่กี่วัน (0 = แสดงทั้งหมด)\nแนว liquidity ที่ยังไม่ถูกกวาด และโซน OB / FVG ที่ยังใช้งานได้ จะแสดงเสมอ")
 
 bool   showOB      = input.bool(true, "Show Order Blocks", group = G_OB)
 int    maxOB       = input.int(5, "Max OB stored per TF / side", minval = 1, maxval = 50, group = G_OB)
@@ -141,6 +143,12 @@ bool   eUse4    = fixedSet or (not autoSet and useTF4)
 bool   eUse5    = fixedSet or (not autoSet and useTF5)
 
 float  atrC    = ta.atr(14)
+
+// History window for structure / liquidity drawings
+int    histCut = timenow - histDays * 86400000
+bool   histOk  = histDays == 0 or time >= histCut
+var array<line>  histLines  = array.new<line>()
+var array<label> histLabels = array.new<label>()
 string lblSize = lblSizeOpt == "Tiny" ? size.tiny : lblSizeOpt == "Small" ? size.small : size.normal
 
 //==============================================================================
@@ -670,14 +678,16 @@ if liqOn and barstate.isconfirmed
                 eqLp.shift()
                 eqLt.shift()
     // 5) Sweep markers
+    if bslHit != "" and histOk
+        histLabels.push(label.new(time, high, "$", xloc = xloc.bar_time, yloc = yloc.abovebar, style = label.style_none, textcolor = liqCol,
+             size = size.small, tooltip = "Buy-side liquidity swept: " + bslHit))
     if bslHit != ""
-        label.new(bar_index, high, "$", yloc = yloc.abovebar, style = label.style_none, textcolor = liqCol, size = size.small,
-             tooltip = "Buy-side liquidity swept: " + bslHit)
         if alLiq
             alert(syminfo.ticker + " swept buy-side liquidity (" + bslHit + ") @ " + fmt(high), alert.freq_once_per_bar_close)
+    if sslHit != "" and histOk
+        histLabels.push(label.new(time, low, "$", xloc = xloc.bar_time, yloc = yloc.belowbar, style = label.style_none, textcolor = liqCol,
+             size = size.small, tooltip = "Sell-side liquidity swept: " + sslHit))
     if sslHit != ""
-        label.new(bar_index, low, "$", yloc = yloc.belowbar, style = label.style_none, textcolor = liqCol, size = size.small,
-             tooltip = "Sell-side liquidity swept: " + sslHit)
         if alLiq
             alert(syminfo.ticker + " swept sell-side liquidity (" + sslHit + ") @ " + fmt(low), alert.freq_once_per_bar_close)
 
@@ -879,6 +889,17 @@ if showSig and barstate.isconfirmed
 
 if barstate.islast
     refreshDisplay()
+    if histDays > 0
+        while histLines.size() > 0 and histLines.first().get_x2() < histCut
+            line.delete(histLines.shift())
+        while histLabels.size() > 0 and histLabels.first().get_x() < histCut
+            label.delete(histLabels.shift())
+        int nl = liqs.size()
+        if nl > 0
+            for i = nl - 1 to 0
+                Liq lq = liqs.get(i)
+                if lq.done and lq.ln.get_x2() < histCut
+                    dropLiq(i)
     for q in liqs
         if not q.done
             q.lb.set_x(time)
@@ -888,9 +909,10 @@ bool msShow = msMode == "All" ? cms != 0 : msMode == "CHoCH only" ? math.abs(cms
 if msShow and barstate.isconfirmed
     color  c   = cms > 0 ? msBullCol : msBearCol
     string txt = math.abs(cms) == 2 ? "CHoCH" : "BOS"
-    line.new(cmsX, cmsLvl, time, cmsLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed)
-    label.new(int(math.avg(cmsX, time)), cmsLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
-         style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.tiny)
+    if histOk
+        histLines.push(line.new(cmsX, cmsLvl, time, cmsLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed))
+        histLabels.push(label.new(int(math.avg(cmsX, time)), cmsLvl, txt, xloc = xloc.bar_time, color = color(na), textcolor = c,
+             style = cms > 0 ? label.style_label_down : label.style_label_up, size = size.tiny))
     if alMS
         alert(syminfo.ticker + " " + (cms > 0 ? "Bullish " : "Bearish ") + txt + " @ " + fmt(cmsLvl), alert.freq_once_per_bar)
 

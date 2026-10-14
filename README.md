@@ -113,6 +113,7 @@
 | Hide lower-TF zones inside higher-TF zones | ซ่อนโซน TF เล็กที่ซ้อนกับโซน TF ใหญ่ และเพิ่มชื่อ TF ในป้าย |
 | Hide mitigated zones | ซ่อนโซนที่ราคาเข้าไปใช้แล้ว |
 | Label size | ขนาดตัวอักษรป้ายโซน |
+| History: CHoCH / BOS / swept liquidity (days) | แสดง CHoCH / BOS, `$` และแนว liquidity ที่ถูกกวาดแล้ว ย้อนหลังกี่วัน (ค่าเริ่มต้น 2, 0 = ทั้งหมด) แนวที่ยังไม่ถูกกวาดแสดงเสมอ |
 | Max OB / FVG stored per TF / side | จำนวนโซนสูงสุดที่เก็บไว้ต่อ TF ต่อฝั่ง |
 | OB mitigation | `Close` = ปิดแท่งทะลุโซน, `Wick` = ไส้เทียนทะลุโซน |
 | Max OB height (x ATR) | จำกัดความหนา OB, `Trim` = ตัดเหลือส่วนที่ใกล้ราคา, `Skip` = ไม่แสดง |
