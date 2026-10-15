@@ -128,6 +128,8 @@ int    divHi       = input.int(60, "/ above", minval = 50, maxval = 99, inline =
      tooltip = "กรองเฉพาะ divergence ที่จุดแรกของ RSI อยู่ในโซนขายมาก / ซื้อมาก (Bull: RSI จุดแรก ≤ 40, Bear: RSI จุดแรก ≥ 60) ลดสัญญาณระหว่างที่ราคาแกว่งกลาง ๆ\nปิดเพื่อแสดงทุก divergence")
 bool   alDiv       = input.bool(false, "RSI divergence", group = G_ALRT,
      tooltip = "แจ้งเตือนเมื่อเกิด Bull / Bear RSI divergence บน TF ที่ตั้ง Alert (5m) แจ้งตอนแท่งปิด")
+int    dashOff     = input.int(10, "Offset from the edge (% of chart height)", minval = 0, maxval = 60, group = G_DASH,
+     tooltip = "เลื่อนตารางลงจากขอบบน (ตำแหน่ง Top) หรือขึ้นจากขอบล่าง (ตำแหน่ง Bottom) ไม่ให้บังชื่อและราคาของ symbol โดยเฉพาะบนมือถือ\n0 = ชิดขอบ, ยังบังอยู่ให้เพิ่มค่า")
 
 // Effective HTFs (fixed set, auto by chart TF, or manual)
 int    chartS   = timeframe.in_seconds(timeframe.period)
@@ -933,8 +935,12 @@ alertcondition(bearDiv, "Bearish RSI divergence", "{{ticker}} Bearish RSI diverg
 //==============================================================================
 // DASHBOARD
 //==============================================================================
-// Compact: one row of "5m ▼" cells (flip level below), Full: TF / Trend / Flip table (k = position of the TF, 0 = chart TF)
-trendCell(table tb, int k, string name, int tr, float flip, bool compact) =>
+// The table itself is transparent (an empty spacer row moves it away from the edge), so each cell has its own background
+color dashBg = color.new(chart.bg_color, 10)
+
+// Compact: one row of "5m ▼" cells (flip level below), Full: TF / Trend / Flip table
+// (k = position of the TF, 0 = chart TF; r0 = first row after the spacer)
+trendCell(table tb, int k, int r0, string name, int tr, float flip, bool compact) =>
     string arrow = tr > 0 ? "▲" : tr < 0 ? "▼" : "–"
     string word  = tr > 0 ? "Bullish" : tr < 0 ? "Bearish" : "Neutral"
     color  c     = tr > 0 ? msBullCol : tr < 0 ? msBearCol : color.gray
@@ -944,42 +950,47 @@ trendCell(table tb, int k, string name, int tr, float flip, bool compact) =>
     string fTip  = hasF ? "Close " + (tr > 0 ? "below " : "above ") + fmtS(flip) + " turns " + name + (tr > 0 ? " Bearish" : " Bullish") + fDist :
          "No new swing yet to turn the " + name + " trend"
     if compact
-        tb.cell(k, 0, name + " " + arrow, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small,
+        tb.cell(k, r0, name + " " + arrow, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small,
              tooltip = name + " trend: " + word)
         if dashFlip
-            tb.cell(k, 1, fTxt, text_color = chart.fg_color, text_size = size.tiny, tooltip = fTip)
+            tb.cell(k, r0 + 1, fTxt, text_color = chart.fg_color, bgcolor = dashBg, text_size = size.tiny, tooltip = fTip)
     else
-        tb.cell(0, k + 1, name + (k == 0 ? " (chart)" : ""), text_color = chart.fg_color, text_size = size.small)
-        tb.cell(1, k + 1, arrow + " " + word, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small)
+        tb.cell(0, r0 + k + 1, name + (k == 0 ? " (chart)" : ""), text_color = chart.fg_color, bgcolor = dashBg, text_size = size.small)
+        tb.cell(1, r0 + k + 1, arrow + " " + word, text_color = color.white, bgcolor = color.new(c, 20), text_size = size.small)
         if dashFlip
-            tb.cell(2, k + 1, fTxt + fDist, text_color = chart.fg_color, text_size = size.small, tooltip = fTip)
+            tb.cell(2, r0 + k + 1, fTxt + fDist, text_color = chart.fg_color, bgcolor = dashBg, text_size = size.small, tooltip = fTip)
 
 if showDash and barstate.islast
     string p = dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Right" ? position.bottom_right :
          dashPos == "Top Left" ? position.top_left : position.bottom_left
     bool cmp = dashStyle == "Compact"
-    var table tb = table.new(p, 6, 7, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80),
-         border_width = 1, frame_color = color.new(chart.fg_color, 70), frame_width = 1)
-    tb.clear(0, 0, 5, 6)
+    bool top = dashPos == "Top Right" or dashPos == "Top Left"
+    int  r0  = top and dashOff > 0 ? 1 : 0
+    var table tb = table.new(p, 6, 9, border_color = color(na), border_width = 1, frame_width = 0)
+    tb.clear(0, 0, 5, 8)
     if not cmp
-        tb.cell(0, 0, "TF", text_color = chart.fg_color, text_size = size.small)
-        tb.cell(1, 0, "Trend", text_color = chart.fg_color, text_size = size.small)
+        tb.cell(0, r0, "TF", text_color = chart.fg_color, bgcolor = dashBg, text_size = size.small)
+        tb.cell(1, r0, "Trend", text_color = chart.fg_color, bgcolor = dashBg, text_size = size.small)
         if dashFlip
-            tb.cell(2, 0, "Flip at", text_color = chart.fg_color, text_size = size.small)
+            tb.cell(2, r0, "Flip at", text_color = chart.fg_color, bgcolor = dashBg, text_size = size.small)
     int k = 0
-    trendCell(tb, k, chartTag, cTrend, cFlip, cmp)
+    trendCell(tb, k, r0, chartTag, cTrend, cFlip, cmp)
     if v1
         k += 1
-        trendCell(tb, k, tfName(eTf1), t1, f1, cmp)
+        trendCell(tb, k, r0, tfName(eTf1), t1, f1, cmp)
     if v2
         k += 1
-        trendCell(tb, k, tfName(eTf2), t2, f2, cmp)
+        trendCell(tb, k, r0, tfName(eTf2), t2, f2, cmp)
     if v3
         k += 1
-        trendCell(tb, k, tfName(eTf3), t3, f3, cmp)
+        trendCell(tb, k, r0, tfName(eTf3), t3, f3, cmp)
     if v4
         k += 1
-        trendCell(tb, k, tfName(eTf4), t4, f4, cmp)
+        trendCell(tb, k, r0, tfName(eTf4), t4, f4, cmp)
     if v5
         k += 1
-        trendCell(tb, k, tfName(eTf5), t5, f5, cmp)
+        trendCell(tb, k, r0, tfName(eTf5), t5, f5, cmp)
+    // Empty spacer row (transparent): above the table at the top, below it at the bottom
+    if dashOff > 0
+        int lastRow = cmp ? (dashFlip ? 1 : 0) : k + 1
+        tb.cell(0, top ? 0 : lastRow + 1, "", height = dashOff)
